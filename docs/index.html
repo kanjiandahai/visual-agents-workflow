@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="可点击的多 Agent 工作流沙盘：规划 → 派发 → 执行 → 审核 → 汇总" />
+  <title>多 Agent 工作流沙盘 · visual-agents-workflow</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>多 Agent 工作流沙盘</h1>
+          <p class="subtitle">点击节点 / 连线查看详情 · 播放剧本模拟协作</p>
+        </div>
+      </div>
+      <div class="controls" role="group" aria-label="播放控制">
+        <button type="button" id="btn-play" class="btn primary" title="播放">▶ 播放</button>
+        <button type="button" id="btn-pause" class="btn" title="暂停" disabled>⏸ 暂停</button>
+        <button type="button" id="btn-step" class="btn" title="单步">⏭ 单步</button>
+        <button type="button" id="btn-reset" class="btn ghost" title="重置">↺ 重置</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="stage-wrap" aria-label="工作流画布">
+        <div class="stage" id="stage">
+          <svg class="edges" id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="nodes" id="nodes"></div>
+          <div class="toast" id="toast" hidden></div>
+        </div>
+        <div class="timeline" aria-label="剧本时间轴">
+          <div class="timeline-label">剧本进度</div>
+          <ol class="timeline-steps" id="timeline"></ol>
+        </div>
+      </section>
+
+      <aside class="panel" id="panel" aria-live="polite">
+        <div class="panel-head">
+          <h2 id="panel-title">选择一个节点或连线</h2>
+          <span class="badge" id="panel-badge">空闲</span>
+        </div>
+        <dl class="panel-meta">
+          <div>
+            <dt>类型</dt>
+            <dd id="panel-type">—</dd>
+          </div>
+          <div>
+            <dt>当前状态</dt>
+            <dd id="panel-state">—</dd>
+          </div>
+        </dl>
+        <div class="panel-block">
+          <h3>职责 / 说明</h3>
+          <p id="panel-desc">点击画布上的角色或消息边，查看角色职责与最近一次交接内容。</p>
+        </div>
+        <div class="panel-block">
+          <h3>最近消息</h3>
+          <pre id="panel-message" class="message">（尚未开始）</pre>
+        </div>
+        <div class="panel-block">
+          <h3>场景简介</h3>
+          <p id="scenario-blurb">示例任务：为「Q1 产品发布」生成一份对外公告草稿，经规划、执行、审核后汇总给用户。</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>visual-agents-workflow · MIT · 假数据剧本，不连接真实 Agent</span>
+      <a href="https://github.com/kanjiandahai/visual-agents-workflow" target="_blank" rel="noopener">GitHub</a>
+    </footer>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
