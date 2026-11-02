@@ -5,24 +5,44 @@
 [![Live demo](https://img.shields.io/badge/GitHub%20Pages-live%20demo-blue)](https://kanjiandahai.github.io/visual-agents-workflow/)
 [![Pages Check](https://github.com/kanjiandahai/visual-agents-workflow/actions/workflows/pages-check.yml/badge.svg)](https://github.com/kanjiandahai/visual-agents-workflow/actions/workflows/pages-check.yml)
 
-可点击的**单 Agent** 工作流沙盘（对齐 dsh headless）—— **剧本模拟** + **近似实时直播** + **第一期本机 dsh 真实任务**。
+可点击的**单 Agent** 工作流沙盘：把一次真实运行画成 **用户 ↔ 助手 ↔ 工具**，支持剧本回放与近似实时直播（含本机 `dsh`）。
 
-> **Clickable single-agent workflow sandbox** (static HTML + local SSE / Task API). Visualizes **User ↔ Agent ↔ Tools** as in `dsh --profile headless`, streams live events, or runs a real prompt via local `dsh`.
+> **Clickable single-agent sandbox** — visualizes **User ↔ Agent ↔ Tools** as in `dsh --profile headless`. Scripted playback, demo live stream, or local SSE + real tasks.
 
 ## 在线演示 / Live demo
 
 **https://kanjiandahai.github.io/visual-agents-workflow/**
 
-（源码在 `docs/`，Pages 指向该目录。GitHub Pages **没有后端**，线上请用「演示直播」。）
+源码在 `docs/`，GitHub Pages 指向该目录。线上**没有后端**，请用「演示直播」；本机 `dsh` / SSE 需本地启动服务。
 
-## 曝光 / Discoverability
+## 你会看到什么
 
-- 机器可读：[`llms.txt`](./llms.txt) · [Pages `llms.txt`](https://kanjiandahai.github.io/visual-agents-workflow/llms.txt)
-- 沙盘演示：https://kanjiandahai.github.io/visual-agents-workflow/
-- 真实任务：[`docs/REAL_TASKS.md`](./docs/REAL_TASKS.md)
-- 本机服务：`node server/sse-server.js` → `http://127.0.0.1:8787`（`/events` · `/emit` · `/tasks` · `/runner`）
+画布对齐 **dsh headless 单 Agent**（不是多角色编排）：
 
-## 本地打开
+| 节点 | 说明 |
+|------|------|
+| **用户 (User)** | 提出任务，接收最终回复 |
+| **助手 (Agent)** | 唯一 Agent：理解、推理、决定是否调工具、整理交付 |
+| **工具 (Tools)** | bash / Read / glob 等；亮起表示调用中或结果回传 |
+
+连线：`提出任务` → `调用工具` → `工具结果` → `回复交付`。
+
+## 两种模式
+
+### 剧本模拟
+
+播放 / 暂停 / 单步 / 重置，按内置单 Agent 剧本推进：提出任务 → 理解 → 调工具 → 工具结果 → 起草 → 交付。点击节点与连线可看详情。
+
+### 直播
+
+| 能力 | 说明 |
+|------|------|
+| **演示直播** | 浏览器内定时注入事件；**GitHub Pages 可直接用** |
+| **连接 SSE** | 订阅本地 `http://127.0.0.1:8787/events` |
+| **提交任务** | 页内表单或 `POST /tasks` → 本机 `dsh` / `fake-dsh` |
+| **事件流** | 时间戳 · 节点 · tool/status · task · 摘要 |
+
+## 快速开始
 
 ```bash
 git clone https://github.com/kanjiandahai/visual-agents-workflow.git
@@ -30,20 +50,22 @@ cd visual-agents-workflow
 
 # 仅静态页（剧本 + 演示直播）
 python3 -m http.server 8080 --directory docs
-# http://localhost:8080
+# → http://localhost:8080
 
-# 或带 SSE 桥（静态页 + /events + /emit）
+# 或带 SSE / Task API
 node server/sse-server.js
-# http://127.0.0.1:8787
+# → http://127.0.0.1:8787
 ```
 
-## 第一期：本机 dsh 真实任务
+打开页面后：顶栏切到 **剧本模拟** 或 **直播**。直播下可先点「开始演示直播」，或「连接 SSE」后再提交任务。
 
-在本机用 **DeepSeek Harness CLI（`dsh`）** 跑用户真实需求，过程推到沙盘「直播」模式。未安装 `dsh` 时自动用 [`scripts/fake-dsh.sh`](./scripts/fake-dsh.sh) 演示（仍发完整事件序列）。
+## 本机 dsh（可选）
+
+本机用 DeepSeek Harness CLI（`dsh`）跑真实 prompt，步骤推到沙盘「直播」。未安装 `dsh` 时自动用 [`scripts/fake-dsh.sh`](./scripts/fake-dsh.sh)。
 
 ```bash
 node server/sse-server.js
-# 浏览器打开 http://127.0.0.1:8787/ → 直播 → 连接 SSE → 填写任务 → 提交任务
+# 浏览器：http://127.0.0.1:8787/ → 直播 → 连接 SSE → 填写任务 → 提交
 ```
 
 ```bash
@@ -52,188 +74,39 @@ curl -s -X POST http://127.0.0.1:8787/tasks \
   -d '{"prompt":"用三句话总结本仓库 README"}'
 ```
 
-- 详细步骤与验收：[`docs/REAL_TASKS.md`](./docs/REAL_TASKS.md)「§8 第一期：本机 dsh」
-- `GET /runner` 可确认当前是 `dsh` 还是 `fake-dsh`
-- 环境变量：`DSH_BIN`、`DSH_PROFILE`（默认 `headless`）
+`GET /runner` 可确认当前是 `dsh` 还是 `fake-dsh`。事件 schema、安全与验收见 **[docs/REAL_TASKS.md](./docs/REAL_TASKS.md)**。
 
-## 沙盘能做什么
-
-画布对齐 **dsh headless 单 Agent**（不再虚构规划者 / 执行者 / 审核者）：
-
-| 节点 | 职责 |
-|------|------|
-| **用户 (User)** | 提出任务，接收最终回复 |
-| **助手 (Agent)** | 唯一 Agent：理解、推理、决定是否调工具、整理交付 |
-| **工具 (Tools)** | bash / Read / glob 等；亮起表示工具调用或结果回传 |
-
-连线：`e-user-agent` 提出任务 · `e-agent-tools` 调用工具 · `e-tools-agent` 工具结果 · `e-agent-user` 回复交付。
-
-### 剧本模拟
-
-- **播放 / 暂停 / 单步 / 重置** —— 按内置单 Agent 剧本推进
-- **节点与连线** —— 高亮当前 handoff；点击查看详情
-- **剧本时间轴** —— 提出任务 → 理解 → 调工具 → 工具结果 → 起草 → 交付
-
-### 直播模式
-
-切换顶栏 **「直播」**：
-
-| 能力 | 说明 |
-|------|------|
-| **演示直播** | 浏览器内定时注入事件，标为「演示直播」，**GitHub Pages 可直接用** |
-| **连接 SSE** | EventSource 订阅本地 `http://127.0.0.1:8787/events` |
-| **提交真实任务** | 页内表单或 `POST /tasks` → 本机 `dsh` / `fake-dsh`，带 `task_id` |
-| **事件流面板** | 时间戳 · Agent · step/tool/status · task · 摘要；可按 task 过滤 |
-| **连接状态** | 未连接 / 连接中 / 直播中 / 演示直播 / 已断开 |
-
-## 近似实时直播
-
-### Pages 演示直播 vs 本地 SSE
-
-| 方式 | 需要后端？ | 适用 |
-|------|------------|------|
-| **演示直播** | 否 | 分享 Pages 链接给客户点开即看 |
-| **本地 SSE** | 是（`server/sse-server.js`） | 把真实 Agent / 例程步骤推到沙盘 |
-
-### 事件 schema
-
-每条事件为 JSON（SSE `data:` 或 `POST /emit` body）：
+事件示例（`POST /emit` 或 SSE `data:`）：
 
 ```json
 {
-  "ts": "2026-11-02T07:00:01.000Z",
   "agent": "tools",
   "type": "tool",
   "tool": "Read",
   "status": "running",
   "message": "tool: Read · README.md",
   "edge": "e-agent-tools",
-  "state": "Read 运行中…",
   "activeNodes": ["agent", "tools"]
 }
 ```
 
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `ts` | 否 | ISO 时间；缺省为接收时刻 |
-| `agent` | 建议 | `user` / `agent` / `tools` / `system`（日志可用；画布三节点） |
-| `type` | 建议 | `task_start` / `status` / `tool` / `message` / `handoff` / `complete` / `error` |
-| `message` | 建议 | 短摘要（事件流与节点「最近消息」） |
-| `edge` | 否 | `e-user-agent` / `e-agent-tools` / `e-tools-agent` / `e-agent-user` |
-| `state` | 否 | 覆盖该节点状态文案 |
-| `activeNodes` | 否 | 同时点亮的节点 id 列表 |
-| `task_id` / `step` / `tool` / `status` | 真实任务建议 | 第一期已透传并在事件流展示 |
-
-样例 NDJSON：[`docs/sample/demo-events.jsonl`](./docs/sample/demo-events.jsonl)
-
-### 启动本地 SSE
-
-```bash
-node server/sse-server.js
-# PORT=8787 HOST=127.0.0.1
-```
-
-- 沙盘：`http://127.0.0.1:8787/`
-- 流：`GET /events`（SSE，事件名 `agent`）
-- 推送：`POST /emit`
-- **任务**：`POST /tasks`、`GET /tasks`、`GET /tasks/:id`、`GET /runner`
-- 健康检查：`GET /health`
-
-页面「直播」→ 确认 SSE 地址 → **连接 SSE**。
-
-### curl 推送示例
-
-```bash
-# 用户提出任务
-curl -s -X POST http://127.0.0.1:8787/emit \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "agent":"user",
-    "type":"handoff",
-    "message":"请总结 README",
-    "edge":"e-user-agent",
-    "state":"正在说明需求",
-    "activeNodes":["user","agent"]
-  }'
-
-# 助手调用工具
-curl -s -X POST http://127.0.0.1:8787/emit \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "agent":"tools",
-    "type":"tool",
-    "tool":"Read",
-    "status":"running",
-    "message":"tool: Read · README.md",
-    "edge":"e-agent-tools",
-    "state":"Read 运行中…",
-    "activeNodes":["agent","tools"]
-  }'
-
-# 结束
-curl -s -X POST http://127.0.0.1:8787/emit \
-  -H 'Content-Type: application/json' \
-  -d '{"agent":"system","type":"complete","message":"run complete"}'
-```
-
-### 真实 Agent / 例程怎么接
-
-在每一步（推理、工具调用、工具结果、交付、完成）用 HTTP POST 同一 schema 即可，例如 shell：
-
-```bash
-emit() {
-  curl -s -X POST http://127.0.0.1:8787/emit \
-    -H 'Content-Type: application/json' \
-    -d "$1" >/dev/null
-}
-
-emit '{"agent":"agent","type":"status","message":"理解任务中","state":"思考中…","activeNodes":["agent"]}'
-# …真实工作 / 工具调用…
-emit '{"agent":"tools","type":"tool","tool":"Read","status":"ok","message":"tool: Read ok","edge":"e-tools-agent","activeNodes":["tools","agent"]}'
-```
-
-Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥（默认只绑 `127.0.0.1`；若暴露到公网请自行加鉴权，本仓库不提供密钥配置）。
-
-## 真实用户任务对接
-
-演示直播 ≠ 真实任务。若要把**用户真实任务**的执行过程推到沙盘，请读：
-
-**[docs/REAL_TASKS.md](./docs/REAL_TASKS.md)** —— 架构、事件 schema、安全、分阶段计划；**§8 第一期：本机 dsh** 含安装/回退与端到端命令。
-
-样例 NDJSON：[`docs/sample/real-task-readme-summarize.jsonl`](./docs/sample/real-task-readme-summarize.jsonl)
-
-## 开启 GitHub Pages
-
-1. 仓库 **Settings → Pages**
-2. Source：**Deploy from a branch**
-3. Branch：`main`，文件夹：`/docs`
+`agent` 取 `user` / `agent` / `tools`（`system` 仅日志）。完整字段与样例 NDJSON 见 `REAL_TASKS.md` 与 [`docs/sample/`](./docs/sample/)。
 
 ## 目录结构
 
 ```
-docs/
-  index.html              # 页面骨架（剧本 / 直播 / 提交任务）+ OG/SEO
-  styles.css
-  app.js                  # 状态机、剧本、演示直播、SSE、Task 表单
-  REAL_TASKS.md           # 真实任务对接（含第一期 dsh）
-  llms.txt                # Pages 副本（机器可读）
-  robots.txt · sitemap.xml · og.svg
-  sample/
+docs/                 # 沙盘前端（Pages 根目录）
+  index.html · app.js · styles.css
+  REAL_TASKS.md       # 真实任务对接说明
+  sample/             # 样例事件
 server/
-  sse-server.js           # SSE + /emit + /tasks + 静态 docs
-  task-runner.js          # dsh / fake-dsh → 单 Agent 事件映射
-  package.json
-  README.md
+  sse-server.js       # SSE + /emit + /tasks + 静态 docs
+  task-runner.js      # dsh / fake-dsh → 单 Agent 事件
 scripts/
-  fake-dsh.sh             # 无 dsh 时的演示 CLI
-.github/workflows/
-  pages-check.yml         # 关键文件与 meta 检查
-llms.txt                  # 机器可读项目摘要
-CONTRIBUTING.md
-LICENSE                   # MIT
-README.md
-.gitignore
+  fake-dsh.sh         # 无 dsh 时的演示 CLI
 ```
+
+开启 Pages：仓库 Settings → Pages → Deploy from a branch → `main` / `/docs`。
 
 ## License
 
