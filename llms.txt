@@ -1,7 +1,7 @@
 # visual-agents-workflow
 
-> 可点击的多 Agent 工作流沙盘（剧本模拟 + 近似实时直播 + 本机 dsh 真实任务）。
-> Clickable multi-agent workflow sandbox: scripted playback, demo live stream, and local SSE / Task API for real `dsh` runs.
+> 可点击的**单 Agent** 工作流沙盘（对齐 dsh headless：用户 / 助手 / 工具）。剧本模拟 + 近似实时直播 + 本机 dsh 真实任务。
+> Clickable **single-agent** workflow sandbox aligned with `dsh --profile headless`: User ↔ Agent ↔ Tools. Scripted playback, demo live stream, local SSE / Task API.
 
 - Repo: https://github.com/kanjiandahai/visual-agents-workflow
 - Live demo (GitHub Pages): https://kanjiandahai.github.io/visual-agents-workflow/
@@ -10,14 +10,24 @@
 
 ## What it is
 
-Interactive sandbox that visualizes a **User → Planner → Executor → Reviewer** loop.
+Interactive sandbox that visualizes a **User → Agent → Tools → Agent → User** loop (one Agent, not a multi-agent cast).
 
 | Mode | Backend needed? | Use |
 |------|-----------------|-----|
-| 剧本模拟 / Script | No | Step through a built-in playbook |
+| 剧本模拟 / Script | No | Step through a built-in single-agent playbook |
 | 演示直播 / Demo live | No (works on Pages) | In-browser timed event injection |
 | SSE live | Yes (`server/sse-server.js`) | Stream real agent events |
-| 真实任务 / Real task | Yes + local `dsh` or `scripts/fake-dsh.sh` | `POST /tasks` runs a prompt and emits the loop |
+| 真实任务 / Real task | Yes + local `dsh` or `scripts/fake-dsh.sh` | `POST /tasks` runs a prompt; maps stdout/`--json` to user/agent/tools |
+
+## Canvas
+
+| Node id | Label | Role |
+|---------|-------|------|
+| `user` | 用户 / User | Submits the task, receives the reply |
+| `agent` | 助手 / Agent | The single dsh agent |
+| `tools` | 工具 / Tools | Tool calls (Read, bash, …) |
+
+Edges: `e-user-agent`, `e-agent-tools`, `e-tools-agent`, `e-agent-user`. Event `agent` field: `user` \| `agent` \| `tools` \| `system`.
 
 ## Run locally
 
@@ -45,7 +55,7 @@ node server/sse-server.js
 | `docs/sample/` | Sample NDJSON event streams |
 | `docs/llms.txt` | Pages-served copy of this file |
 | `server/sse-server.js` | SSE `/events`, `/emit`, `/tasks`, static `docs/` |
-| `server/task-runner.js` | `dsh` / `fake-dsh` orchestration |
+| `server/task-runner.js` | `dsh` / `fake-dsh` → single-agent event mapping |
 | `scripts/fake-dsh.sh` | Fallback CLI when `dsh` is missing |
 
 ## HTTP API (local SSE server, default `127.0.0.1:8787`)
@@ -54,18 +64,18 @@ node server/sse-server.js
 |--------|------|-------|
 | `GET` | `/` | Sandbox UI |
 | `GET` | `/health` | Health + runner hint |
-| `GET` | `/runner` | `{ runner_kind: "dsh" \| "fake-dsh", ... }` |
+| `GET` | `/runner` | `{ runner_kind: "dsh" \| "fake-dsh", topology: "user-agent-tools", ... }` |
 | `GET` | `/events` | SSE stream (event name `agent`) |
 | `POST` | `/emit` | Push one JSON agent event |
 | `POST` | `/tasks` | Body `{ "prompt": "…" }` → `{ task_id, runner_kind }` |
 | `GET` | `/tasks` | List tasks |
 | `GET` | `/tasks/:id` | Task detail |
 
-Env: `PORT`, `HOST`, `DSH_BIN`, `DSH_PROFILE` (default `headless`). Do not commit API keys.
+Env: `PORT`, `HOST`, `DSH_BIN`, `DSH_PROFILE` (default `headless`), `DSH_JSON` (`0` disables `--json`). Do not commit API keys.
 
 ## Event schema (summary)
 
-JSON fields commonly used: `ts`, `agent` (`user`/`planner`/`executor`/`reviewer`/`system`), `type` (`status`/`dispatch`/`tool`/`message`/`handoff`/`complete`/`error`), `message`, `edge`, `state`, `activeNodes`, plus `task_id` / `step` / `tool` / `status` for real tasks.
+JSON fields: `ts`, `agent` (`user`/`agent`/`tools`/`system`), `type` (`task_start`/`status`/`tool`/`message`/`handoff`/`complete`/`error`), `message`, `edge`, `state`, `activeNodes`, plus `task_id` / `step` / `tool` / `status` for real tasks.
 
 Full guide: https://github.com/kanjiandahai/visual-agents-workflow/blob/main/docs/REAL_TASKS.md
 

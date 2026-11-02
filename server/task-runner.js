@@ -2,7 +2,8 @@
 
 /**
  * Phase-1 local runner: spawn `dsh` (DeepSeek Harness) when on PATH,
- * otherwise scripts/fake-dsh.sh. Emits REAL_TASKS schema events via callback.
+ * otherwise scripts/fake-dsh.sh. Emits REAL_TASKS schema events for a
+ * **single Agent** topology: user ↔ agent ↔ tools (no planner/reviewer).
  */
 
 const { spawn, spawnSync } = require("child_process");
@@ -41,16 +42,28 @@ function whichDsh() {
 
 function resolveRunner() {
   const real = whichDsh();
-  if (real) {
-    return { bin: real, kind: "dsh", argsPrefix: ["--profile", process.env.DSH_PROFILE || "headless"] };
+  const profile = process.env.DSH_PROFILE || "headless";
+  // Prefer --json NDJSON for real headless dsh (see: dsh --profile headless --help).
+  const wantJson = process.env.DSH_JSON !== "0";
+  const looksFake =
+    real &&
+    (path.basename(real) === "fake-dsh.sh" ||
+      real === FAKE_DSH ||
+      /fake-dsh/i.test(real));
+  if (real && !looksFake) {
+    const argsPrefix = ["--profile", profile];
+    if (wantJson) argsPrefix.push("--json");
+    return { bin: real, kind: "dsh", argsPrefix, jsonPreferred: wantJson };
   }
-  if (!fs.existsSync(FAKE_DSH)) {
+  const bin = looksFake ? real : FAKE_DSH;
+  if (!fs.existsSync(bin)) {
     throw new Error(`dsh not on PATH and fake runner missing: ${FAKE_DSH}`);
   }
   return {
-    bin: FAKE_DSH,
+    bin,
     kind: "fake-dsh",
-    argsPrefix: ["--profile", process.env.DSH_PROFILE || "headless"],
+    argsPrefix: ["--profile", profile],
+    jsonPreferred: false,
   };
 }
 
@@ -69,7 +82,7 @@ function truncate(s, n = 240) {
 
 /**
  * @param {(ev: object) => void} emit
- * @param {object} base
+ * @param {{ task_id: string, step: number }} base
  * @param {Partial<object>} fields
  */
 function emitStep(emit, base, fields) {
@@ -85,9 +98,248 @@ function emitStep(emit, base, fields) {
 }
 
 /**
- * @param {{ prompt: string, cwd?: string }} opts
- * @param {(ev: object) => void} emit
+ * Detect tool-looking plain-text lines from dsh / fake-dsh stdout.
+ * @param {string} line
+ * @returns {{ isTool: boolean, tool: string|null, status: string|null, isResult: boolean }}
  */
+function classifyPlainLine(line) {
+  const t = line.trim();
+  const lower = t.toLowerCase();
+  const resultHint =
+    /\b(tool[_ ]?result|result\s*[:=]|status\s*=\s*ok|status\s*=\s*error|tool.*\bok\b)/i.test(
+      t
+    );
+  const m =
+    t.match(/\btool\s*[:：]\s*([A-Za-z0-9_./-]+)/i) ||
+    t.match(/\b(tool_call|tool_use)\s*[:\s]+([A-Za-z0-9_./-]+)/i) ||
+    t.match(/\bcalling\s+([A-Za-z0-9_./-]+)/i) ||
+    t.match(/\b(Read|Bash|bash|Glob|glob|Grep|Write|Shell|WebSearch)\b/);
+  const toolName = m
+    ? (m[2] || m[1] || "").replace(/^tool[_-]?/i, "") || m[0]
+    : null;
+  const looksTool =
+    !!toolName ||
+    /\btool[_:]/i.test(t) ||
+    /\[tool/i.test(t) ||
+    /\bworkspace\.\w+/i.test(t);
+  let status = null;
+  if (/status\s*=\s*error|\berror\b/i.test(lower) && looksTool) status = "error";
+  else if (/status\s*=\s*ok|\bok\b/i.test(lower) && looksTool) status = "ok";
+  else if (looksTool) status = resultHint ? "ok" : "running";
+  return {
+    isTool: looksTool,
+    tool: toolName && toolName.length < 64 ? String(toolName) : null,
+    status,
+    isResult: looksTool && (resultHint || status === "ok" || status === "error"),
+  };
+}
+
+/**
+ * Map one NDJSON object from `dsh --json` (best-effort; schemas vary).
+ * @param {object} obj
+ * @returns {object|null} fields for emitStep, or null to skip
+ */
+function mapJsonEvent(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const typeRaw = String(obj.type || obj.event || obj.kind || "").toLowerCase();
+  const role = String(obj.role || obj.agent || obj.speaker || "").toLowerCase();
+  const msg =
+    obj.message ||
+    obj.text ||
+    obj.content ||
+    obj.delta ||
+    obj.summary ||
+    (typeof obj.result === "string" ? obj.result : null) ||
+    (typeof obj.output === "string" ? obj.output : null) ||
+    "";
+  const toolName =
+    obj.tool ||
+    obj.name ||
+    (obj.tool_call && (obj.tool_call.name || obj.tool_call.tool)) ||
+    null;
+
+  // Real dsh --json: session bootstrap
+  if (typeRaw === "session") {
+    return {
+      agent: "system",
+      type: "status",
+      message: truncate(`session ${obj.sessionId || ""}`.trim(), 200),
+      activeNodes: ["agent"],
+      detail: { sessionId: obj.sessionId, cwd: obj.cwd },
+    };
+  }
+
+  // Real dsh --json: status with phase (turn_start / step_start / …)
+  if (typeRaw === "status" && obj.phase) {
+    const phase = String(obj.phase);
+    return {
+      agent: "agent",
+      type: "status",
+      status: "running",
+      message: truncate(
+        `phase:${phase}${obj.turn != null ? ` turn=${obj.turn}` : ""}${
+          obj.step != null ? ` step=${obj.step}` : ""
+        }`,
+        200
+      ),
+      state: phase,
+      activeNodes: ["agent"],
+      detail: { phase, turn: obj.turn, step: obj.step },
+    };
+  }
+
+  if (
+    typeRaw === "user" ||
+    typeRaw === "user_message" ||
+    typeRaw === "task_start" ||
+    role === "user"
+  ) {
+    return {
+      agent: "user",
+      type: typeRaw === "task_start" ? "task_start" : "message",
+      message: truncate(msg || "(user)", 300),
+      edge: "e-user-agent",
+      state: "已提交",
+      activeNodes: ["user", "agent"],
+    };
+  }
+
+  // Real dsh: {"type":"tool_call","tool":"read","input":{…}}
+  if (typeRaw === "tool_call" || typeRaw === "tool_use") {
+    const name = toolName ? String(toolName) : "tool";
+    const inputHint =
+      obj.input && typeof obj.input === "object"
+        ? truncate(JSON.stringify(obj.input), 120)
+        : "";
+    return {
+      agent: "tools",
+      type: "tool",
+      tool: name,
+      status: "running",
+      message: truncate(
+        msg || `tool_call: ${name}${inputHint ? " · " + inputHint : ""}`,
+        300
+      ),
+      edge: "e-agent-tools",
+      state: `${name} 运行中…`,
+      activeNodes: ["agent", "tools"],
+      detail: { callId: obj.callId, input: obj.input },
+    };
+  }
+
+  // Real dsh: {"type":"tool_result","status":"completed","result":"…"}
+  if (
+    typeRaw === "tool_result" ||
+    typeRaw === "tool_response" ||
+    typeRaw === "function_result"
+  ) {
+    const st = String(obj.status || (obj.ok === false ? "error" : "ok")).toLowerCase();
+    const ok = st !== "error" && st !== "failed" && obj.ok !== false;
+    const name = toolName ? String(toolName) : "tool";
+    return {
+      agent: "tools",
+      type: "tool",
+      tool: toolName ? String(toolName) : undefined,
+      status: ok ? "ok" : "error",
+      message: truncate(msg || `tool_result · ${ok ? "ok" : "error"}`, 300),
+      edge: "e-tools-agent",
+      state: ok ? `${name} 完成` : `${name} 失败`,
+      activeNodes: ["tools", "agent"],
+      detail: { callId: obj.callId, status: obj.status },
+    };
+  }
+
+  if (typeRaw === "tool") {
+    const st = String(obj.status || "running").toLowerCase();
+    const running = !st || st === "running" || st === "pending" || st === "start";
+    return {
+      agent: "tools",
+      type: "tool",
+      tool: toolName ? String(toolName) : undefined,
+      status: running ? "running" : st === "error" ? "error" : "ok",
+      message: truncate(
+        msg ||
+          `tool: ${toolName || "unknown"}${running ? " · running" : " · " + st}`,
+        300
+      ),
+      edge: running ? "e-agent-tools" : "e-tools-agent",
+      state: running
+        ? `${toolName || "tool"} 运行中…`
+        : `${toolName || "tool"} ${st}`,
+      activeNodes: running ? ["agent", "tools"] : ["tools", "agent"],
+    };
+  }
+
+  // Real dsh: final / text / thinking
+  if (typeRaw === "final" || typeRaw === "complete" || typeRaw === "done" || typeRaw === "finish") {
+    if (!String(msg || "").trim() && typeRaw === "thinking") return null;
+    return {
+      agent: "agent",
+      type: "message",
+      status: "ok",
+      message: truncate(msg || "最终回复就绪", 300),
+      state: "准备交付",
+      activeNodes: ["agent"],
+      _finalHint: true,
+    };
+  }
+
+  if (typeRaw === "thinking" || typeRaw === "thought") {
+    if (!String(msg || "").trim()) return null; // dsh often emits empty thinking
+    return {
+      agent: "agent",
+      type: "status",
+      message: truncate(msg, 300),
+      state: "思考中…",
+      activeNodes: ["agent"],
+    };
+  }
+
+  if (
+    typeRaw === "text" ||
+    typeRaw === "assistant" ||
+    typeRaw === "message" ||
+    typeRaw === "delta" ||
+    typeRaw === "result" ||
+    role === "assistant" ||
+    role === "agent"
+  ) {
+    if (!String(msg || "").trim()) return null;
+    return {
+      agent: "agent",
+      type: "message",
+      message: truncate(msg, 300),
+      state: typeRaw === "result" ? "准备交付" : "回复中…",
+      activeNodes: ["agent"],
+      _finalHint: typeRaw === "result" ? true : undefined,
+    };
+  }
+
+  if (toolName) {
+    return {
+      agent: "tools",
+      type: "tool",
+      tool: String(toolName),
+      status: String(obj.status || "running"),
+      message: truncate(msg || `tool: ${toolName}`, 300),
+      edge: "e-agent-tools",
+      state: "工具活动",
+      activeNodes: ["agent", "tools"],
+    };
+  }
+
+  if (msg) {
+    return {
+      agent: "agent",
+      type: "message",
+      message: truncate(msg, 300),
+      state: "执行中…",
+      activeNodes: ["agent"],
+    };
+  }
+  return null;
+}
+
 function createAndRunTask(opts, emit) {
   const prompt = String(opts.prompt || "").trim();
   if (!prompt) throw new Error("prompt is required");
@@ -113,7 +365,6 @@ function createAndRunTask(opts, emit) {
   const base = { task_id, step: 0 };
   const cwd = opts.cwd ? path.resolve(opts.cwd) : REPO_ROOT;
 
-  // Kick off async — do not block HTTP response
   setImmediate(() => runPipeline(rec, runner, prompt, cwd, emit, base));
 
   return {
@@ -127,7 +378,7 @@ function createAndRunTask(opts, emit) {
 
 /**
  * @param {TaskRecord} rec
- * @param {{ bin: string, kind: string, argsPrefix: string[] }} runner
+ * @param {{ bin: string, kind: string, argsPrefix: string[], jsonPreferred?: boolean }} runner
  * @param {string} prompt
  * @param {string} cwd
  * @param {(ev: object) => void} emit
@@ -142,44 +393,27 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
     type: "task_start",
     status: "running",
     message: truncate(prompt, 280),
-    edge: "e-user-planner",
+    edge: "e-user-agent",
     state: "已提交真实任务",
-    activeNodes: ["user", "planner"],
+    activeNodes: ["user", "agent"],
     detail: { runner: runner.bin, runner_kind: runner.kind, cwd },
   });
 
   emitStep(emit, base, {
-    agent: "planner",
+    agent: "agent",
     type: "status",
     status: "running",
-    message: `拆解：用本机 ${runner.kind} 执行用户任务`,
-    state: "拆解步骤中",
-    activeNodes: ["planner"],
-  });
-
-  emitStep(emit, base, {
-    agent: "planner",
-    type: "dispatch",
-    status: "ok",
-    message: `派发执行者 · ${runner.kind}`,
-    edge: "e-planner-executor",
-    state: "已派发，等待回报",
-    activeNodes: ["planner", "executor"],
-    tool: runner.kind,
+    message: `启动本机 ${runner.kind}（单 Agent · headless）`,
+    state: "启动中…",
+    activeNodes: ["agent"],
+    detail: {
+      argv0: runner.bin,
+      profile: process.env.DSH_PROFILE || "headless",
+      json: !!runner.jsonPreferred,
+    },
   });
 
   const cmdArgs = [...runner.argsPrefix, prompt];
-  emitStep(emit, base, {
-    agent: "executor",
-    type: "tool",
-    tool: runner.kind,
-    status: "running",
-    message: `启动 ${path.basename(runner.bin)} ${runner.argsPrefix.join(" ")} …`,
-    state: "调用 dsh…",
-    activeNodes: ["executor"],
-    detail: { argv0: runner.bin, profile: process.env.DSH_PROFILE || "headless" },
-  });
-
   const child = spawn(runner.bin, cmdArgs, {
     cwd,
     env: { ...process.env, VISUAL_AGENTS_TASK_ID: rec.task_id },
@@ -190,29 +424,70 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
   let stderr = "";
   let lineBuf = "";
   let chunkCount = 0;
+  let jsonHits = 0;
+  let sawFinal = false;
+
+  const emitFromLine = (line, streamName) => {
+    const t = line.trim();
+    if (!t) return;
+    chunkCount += 1;
+    if (chunkCount > 60) return;
+
+    if (t.startsWith("{") && t.endsWith("}")) {
+      try {
+        const obj = JSON.parse(t);
+        const mapped = mapJsonEvent(obj);
+        if (mapped) {
+          jsonHits += 1;
+          const finalHint = mapped._finalHint;
+          delete mapped._finalHint;
+          if (finalHint) sawFinal = true;
+          emitStep(emit, base, {
+            ...mapped,
+            detail: { stream: streamName, json: true },
+          });
+          return;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+
+    const cls = classifyPlainLine(t);
+    if (cls.isTool) {
+      const asResult = cls.isResult;
+      emitStep(emit, base, {
+        agent: "tools",
+        type: "tool",
+        tool: cls.tool || undefined,
+        status: cls.status || (asResult ? "ok" : "running"),
+        message: truncate(t, 300),
+        edge: asResult ? "e-tools-agent" : "e-agent-tools",
+        state: asResult
+          ? `${cls.tool || "tool"} 完成`
+          : `${cls.tool || "tool"} 运行中…`,
+        activeNodes: asResult ? ["tools", "agent"] : ["agent", "tools"],
+        detail: { stream: streamName },
+      });
+      return;
+    }
+
+    emitStep(emit, base, {
+      agent: "agent",
+      type: streamName === "stderr" ? "status" : "message",
+      status: "running",
+      message: truncate(t, 300),
+      state: "执行中…",
+      activeNodes: ["agent"],
+      detail: { stream: streamName },
+    });
+  };
 
   const flushLines = (chunk, streamName) => {
     lineBuf += chunk;
     const parts = lineBuf.split(/\r?\n/);
     lineBuf = parts.pop() || "";
-    for (const line of parts) {
-      const t = line.trim();
-      if (!t) continue;
-      chunkCount += 1;
-      // Cap chatty streams so the event bus stays readable
-      if (chunkCount <= 40) {
-        emitStep(emit, base, {
-          agent: "executor",
-          type: streamName === "stderr" ? "status" : "message",
-          tool: runner.kind,
-          status: "running",
-          message: truncate(t, 300),
-          state: "执行中…",
-          activeNodes: ["executor"],
-          detail: { stream: streamName },
-        });
-      }
-    }
+    for (const line of parts) emitFromLine(line, streamName);
   };
 
   child.stdout.on("data", (buf) => {
@@ -235,22 +510,14 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
       type: "error",
       status: "error",
       message: `无法启动 runner: ${rec.error}`,
-      activeNodes: ["system"],
+      activeNodes: ["agent"],
       detail: { runner: runner.bin },
     });
   });
 
   child.on("close", (code) => {
-    if (lineBuf.trim() && chunkCount < 40) {
-      emitStep(emit, base, {
-        agent: "executor",
-        type: "message",
-        tool: runner.kind,
-        status: "running",
-        message: truncate(lineBuf.trim(), 300),
-        state: "执行中…",
-        activeNodes: ["executor"],
-      });
+    if (lineBuf.trim() && chunkCount < 60) {
+      emitFromLine(lineBuf.trim(), "stdout");
       lineBuf = "";
     }
 
@@ -261,61 +528,42 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
     rec.updated_at = new Date().toISOString();
 
     emitStep(emit, base, {
-      agent: "executor",
-      type: "tool",
-      tool: runner.kind,
+      agent: "agent",
+      type: "status",
       status: ok ? "ok" : "error",
       message: ok
-        ? `${runner.kind} 退出 0 · 输出 ${stdout.length} 字符`
+        ? `${runner.kind} 退出 0 · 输出 ${stdout.length} 字符${
+            jsonHits ? ` · JSON 事件 ${jsonHits}` : ""
+          }`
         : `${runner.kind} 退出 ${code}`,
-      state: ok ? "已产出结果" : "执行失败",
-      activeNodes: ["executor"],
-      detail: { exit_code: code, stdout_chars: stdout.length, stderr_chars: stderr.length },
-    });
-
-    emitStep(emit, base, {
-      agent: "executor",
-      type: "handoff",
-      status: ok ? "ok" : "error",
-      message: ok ? `提交审核：${summary}` : `失败摘要：${truncate(stderr || summary, 280)}`,
-      edge: "e-executor-reviewer",
-      activeNodes: ["executor", "reviewer"],
-    });
-
-    emitStep(emit, base, {
-      agent: "reviewer",
-      type: "status",
-      status: "running",
-      message: ok ? "检查输出是否非空且可交付" : "记录失败原因",
-      state: "检查中",
-      activeNodes: ["reviewer"],
+      state: ok ? "整理回复…" : "执行失败",
+      activeNodes: ["agent"],
+      detail: {
+        exit_code: code,
+        stdout_chars: stdout.length,
+        stderr_chars: stderr.length,
+        json_hits: jsonHits,
+      },
     });
 
     if (ok) {
+      if (!sawFinal) {
+        emitStep(emit, base, {
+          agent: "agent",
+          type: "message",
+          status: "ok",
+          message: truncate(summary, 360),
+          state: "最终回复",
+          activeNodes: ["agent"],
+        });
+      }
       emitStep(emit, base, {
-        agent: "reviewer",
-        type: "message",
-        status: "ok",
-        message: "通过（第一期自动审核：退出码 0）",
-        state: "已通过",
-        activeNodes: ["reviewer"],
-      });
-      emitStep(emit, base, {
-        agent: "reviewer",
+        agent: "agent",
         type: "handoff",
         status: "ok",
-        message: `审核通过，交规划者汇总：${summary}`,
-        edge: "e-reviewer-planner",
-        activeNodes: ["reviewer", "planner"],
-        state: "已反馈",
-      });
-      emitStep(emit, base, {
-        agent: "planner",
-        type: "handoff",
-        status: "ok",
-        message: `汇总交付用户：${summary}`,
-        edge: "e-planner-user",
-        activeNodes: ["planner", "user"],
+        message: `回复交付用户：${truncate(summary, 280)}`,
+        edge: "e-agent-user",
+        activeNodes: ["agent", "user"],
         state: "已交付",
       });
       emitStep(emit, base, {
@@ -336,14 +584,6 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
         detail: { exit_code: 0, runner_kind: runner.kind },
       });
     } else {
-      emitStep(emit, base, {
-        agent: "reviewer",
-        type: "message",
-        status: "error",
-        message: "未通过：runner 非零退出",
-        state: "已驳回",
-        activeNodes: ["reviewer"],
-      });
       rec.status = "error";
       rec.error = `exit ${code}`;
       emitStep(emit, base, {
@@ -351,7 +591,7 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
         type: "error",
         status: "error",
         message: `任务失败 · ${rec.task_id} · exit ${code}`,
-        activeNodes: ["reviewer"],
+        activeNodes: ["agent"],
         detail: { exit_code: code, stderr: truncate(stderr, 500) },
       });
     }
@@ -378,10 +618,12 @@ function runnerInfo() {
       runner: r.bin,
       runner_kind: r.kind,
       profile: process.env.DSH_PROFILE || "headless",
+      json: !!r.jsonPreferred,
+      topology: "user-agent-tools",
       hint:
         r.kind === "fake-dsh"
           ? "Install DeepSeek Harness so `dsh` is on PATH, or set DSH_BIN. Using scripts/fake-dsh.sh for demo."
-          : "Using real dsh from PATH (or DSH_BIN).",
+          : "Using real dsh from PATH (or DSH_BIN). Events map to single-agent user/agent/tools.",
     };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
@@ -396,4 +638,6 @@ module.exports = {
   resolveRunner,
   whichDsh,
   FAKE_DSH,
+  classifyPlainLine,
+  mapJsonEvent,
 };

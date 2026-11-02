@@ -25,7 +25,7 @@
   <path d="M320 294 H400" stroke="url(#accent)" stroke-width="4" fill="none"/>
   <path d="M580 224 H660 294" stroke="url(#accent)" stroke-width="4" fill="none"/>
   <path d="M840 294 H920 224" stroke="url(#accent)" stroke-width="4" fill="none"/>
-  <text x="60" y="80" fill="#f8fafc" font-family="system-ui,sans-serif" font-size="48" font-weight="800">多 Agent 工作流沙盘</text>
+  <text x="60" y="80" fill="#f8fafc" font-family="system-ui,sans-serif" font-size="48" font-weight="800">单 Agent 工作流沙盘</text>
   <text x="60" y="140" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="28">visual-agents-workflow · script + live SSE</text>
   <text x="60" y="560" fill="#64748b" font-family="system-ui,sans-serif" font-size="24">kanjiandahai.github.io/visual-agents-workflow</text>
 </svg>

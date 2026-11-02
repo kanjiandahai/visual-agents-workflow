@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fake-dsh — drop-in demo runner when real `dsh` (DeepSeek Harness) is not on PATH.
 # Accepts the same shape Task API uses: optional --profile <name>, then a job string.
-# Prints staged stdout so the sandbox can stream realistic executor events.
+# Prints staged stdout so the sandbox can stream realistic single-agent / tool events.
 set -euo pipefail
 
 profile="headless"
@@ -11,6 +11,10 @@ while [[ $# -gt 0 ]]; do
     --profile)
       profile="${2:-headless}"
       shift 2
+      ;;
+    --json)
+      # accepted for argv compatibility with real dsh headless; still prints text lines
+      shift
       ;;
     --help|-h)
       echo "fake-dsh [--profile <name>] <job>"

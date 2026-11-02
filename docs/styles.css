@@ -10,9 +10,8 @@
   --warn: #f5b942;
   --danger: #ff6b8a;
   --user: #7c9cff;
-  --planner: #5b8cff;
-  --executor: #36d6a2;
-  --reviewer: #f5b942;
+  --agent: #5b8cff;
+  --tools: #36d6a2;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   --radius: 14px;
   --font: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -270,25 +269,19 @@ body {
 .node[data-id="user"] {
   --node-color: var(--user);
   left: 18%;
-  top: 22%;
+  top: 32%;
 }
 
-.node[data-id="planner"] {
-  --node-color: var(--planner);
-  left: 52%;
-  top: 18%;
+.node[data-id="agent"] {
+  --node-color: var(--agent);
+  left: 50%;
+  top: 28%;
 }
 
-.node[data-id="executor"] {
-  --node-color: var(--executor);
+.node[data-id="tools"] {
+  --node-color: var(--tools);
   left: 78%;
-  top: 48%;
-}
-
-.node[data-id="reviewer"] {
-  --node-color: var(--reviewer);
-  left: 42%;
-  top: 72%;
+  top: 62%;
 }
 
 .toast {
@@ -479,23 +472,18 @@ body {
   }
 
   .node[data-id="user"] {
-    left: 22%;
-    top: 18%;
+    left: 20%;
+    top: 28%;
   }
 
-  .node[data-id="planner"] {
-    left: 72%;
-    top: 20%;
+  .node[data-id="agent"] {
+    left: 70%;
+    top: 24%;
   }
 
-  .node[data-id="executor"] {
-    left: 72%;
-    top: 58%;
-  }
-
-  .node[data-id="reviewer"] {
-    left: 28%;
-    top: 70%;
+  .node[data-id="tools"] {
+    left: 55%;
+    top: 68%;
   }
 }
 
@@ -730,9 +718,8 @@ body {
 }
 
 .event-list .agent[data-agent="user"] { color: var(--user); }
-.event-list .agent[data-agent="planner"] { color: var(--planner); }
-.event-list .agent[data-agent="executor"] { color: var(--executor); }
-.event-list .agent[data-agent="reviewer"] { color: var(--reviewer); }
+.event-list .agent[data-agent="agent"] { color: var(--agent); }
+.event-list .agent[data-agent="tools"] { color: var(--tools); }
 .event-list .agent[data-agent="system"] { color: var(--muted); }
 
 .event-list .etype {

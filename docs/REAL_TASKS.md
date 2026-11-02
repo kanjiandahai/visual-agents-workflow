@@ -1,7 +1,7 @@
 # 真实用户任务对接方案
 
-> 目标：用户提交并跑起**真实任务** → Agent / 多 Agent 实际执行 → 沙盘「直播」模式近似实时展示过程。  
-> **第一期（本机 dsh）已落地**：本地 Task API `POST /tasks` + `dsh` / `fake-dsh` runner + 事件透传；托管多租户仍属后续阶段。
+> 目标：用户提交并跑起**真实任务** → **dsh 单 Agent** 实际执行 → 沙盘「直播」模式按 **用户 / 助手 / 工具** 近似实时展示。  
+> **第一期（本机 dsh）已落地**：本地 Task API `POST /tasks` + `dsh` / `fake-dsh` runner + 单 Agent 事件映射；托管多租户仍属后续阶段。
 
 中文为主；English terms kept where they match code (`/emit`, SSE, `task_id`).
 
@@ -11,7 +11,7 @@
 
 | 角色 | 期望体验 |
 |------|----------|
-| **最终用户** | 输入真实需求（例如「总结这个 README」），看到 Planner → Executor → Reviewer 的**真实步骤**滚动出现，而不是固定剧本 |
+| **最终用户** | 输入真实需求（例如「总结这个 README」），看到 **User → Agent → Tools → Agent → User** 的**真实步骤**滚动出现，而不是固定多角色剧本 |
 | **集成方** | 在已有 Agent / Grok Bot / 例程 / 自建 runner 里，每完成一步就 `POST` 一条事件；沙盘只负责可视化 |
 | **本仓库** | 提供沙盘 UI、事件 schema、本地 SSE 桥、样例与文档；**不**替代真实执行环境 |
 
@@ -68,14 +68,14 @@
   "ts": "2026-11-02T07:00:01.000Z",
   "task_id": "task_20261102_readme_1",
   "step": 3,
-  "agent": "executor",
+  "agent": "tools",
   "type": "tool",
   "tool": "Read",
   "status": "ok",
   "message": "已读取 README.md（前 200 行）",
-  "edge": null,
+  "edge": "e-tools-agent",
   "state": "整理摘要…",
-  "activeNodes": ["executor"],
+  "activeNodes": ["tools", "agent"],
   "detail": {
     "path": "README.md",
     "chars": 4200
@@ -90,12 +90,12 @@
 | `task_id` | **真实任务必填** | 一次用户任务的稳定 id；前端可按此过滤/分组 |
 | `step` | 建议 | 单调递增序号（1, 2, 3…），便于排序与断线补齐 |
 | `ts` | 否 | ISO-8601；缺省由接收端补 |
-| `agent` | 建议 | `user` / `planner` / `executor` / `reviewer` / `system` |
+| `agent` | 建议 | `user` / `agent` / `tools` / `system` |
 | `type` | 建议 | 见下表 |
 | `tool` | 工具步骤建议 | 工具名（`Read` / `WebSearch` / …）；**不要**带参数里的密钥 |
 | `status` | 建议 | `pending` / `running` / `ok` / `error` / `skipped` |
 | `message` | 建议 | 给人看的短摘要（事件流主文案） |
-| `edge` | 否 | `e-user-planner` / `e-planner-executor` / `e-executor-reviewer` / `e-reviewer-user` 等 |
+| `edge` | 否 | `e-user-agent` / `e-agent-tools` / `e-tools-agent` / `e-agent-user` |
 | `state` | 否 | 覆盖该 agent 节点状态文案 |
 | `activeNodes` | 否 | 同时点亮的节点 id |
 | `detail` | 否 | 结构化附件；**禁止**密钥、完整 token、未脱敏 PII |
@@ -106,7 +106,7 @@
 |--------|----------|
 | `task_start` | 用户任务已受理（常配 `agent: system` 或 `user`） |
 | `status` | 心跳 / 阶段说明 |
-| `dispatch` | 规划者派发子任务 |
+| `dispatch` | （可选）阶段说明；单 Agent 拓扑下较少使用 |
 | `tool` | 工具调用开始或结束（用 `status` 区分） |
 | `message` | Agent 之间或对用户的自然语言 |
 | `handoff` | 交接（常配 `edge`） |
@@ -123,6 +123,23 @@
 样例序列见 [`sample/real-task-readme-summarize.jsonl`](./sample/real-task-readme-summarize.jsonl)。
 
 ---
+
+### 3.5 单 Agent 拓扑（与 dsh headless 对齐）
+
+画布节点仅 **`user` / `agent` / `tools`**。`system` 可出现在事件日志，但不作为画布角色。
+
+Live 映射（`server/task-runner.js`）：
+
+1. `task_start` → `agent:user`，`edge: e-user-agent`
+2. 普通 stdout / thinking / assistant → `agent:agent`
+3. 工具调用（`--json` 的 `tool_call`，或纯文本里像 `tool: Read`）→ `agent:tools`，`edge: e-agent-tools`
+4. 工具结果 → `edge: e-tools-agent`
+5. 进程结束成功 → 助手摘要 + `edge: e-agent-user` + `complete`
+
+**禁止**再合成 planner / executor / reviewer 步骤。
+
+真实 `dsh --profile headless --json` 常见类型：`session` · `status(phase=…)` · `thinking` · `text` · `tool_call` · `tool_result` · `final`。`task-runner.js` 已按此映射。
+
 
 ## 4. 安全
 
@@ -179,7 +196,7 @@
 | 本地 SSE `/events` `/emit` | ✅（开发桥） | 可替换为自建总线 |
 | 事件 schema 与样例 | ✅ 文档 + jsonl | 必须遵守并 emit |
 | 接收用户真实任务并执行 | ❌ | ✅ |
-| 调用工具 / LLM / 多 Agent | ❌ | ✅ |
+| 调用工具 / LLM / 单 Agent（dsh） | ❌ | ✅ |
 | 密钥与凭证 | ❌ 不进事件、不进本仓 | ✅ vault / 环境变量 |
 | 公网鉴权、多租户、审计 | 文档要求；实现属宿主 | ✅ |
 | GitHub Pages 托管静态演示 | ✅ | — |
@@ -200,17 +217,13 @@
 
 | step | agent | type | 要点 |
 |------|-------|------|------|
-| 1 | user | `task_start` | 用户提交任务；`edge: e-user-planner` |
-| 2 | planner | `status` | 拆解：读 README → 提炼 → 交审核 |
-| 3 | planner | `dispatch` | 派发执行者；`edge: e-planner-executor` |
-| 4 | executor | `tool` / `status: running` | `tool: Read` 开始读 `README.md` |
-| 5 | executor | `tool` / `status: ok` | 读取完成（消息里可含字数，勿贴全文密钥） |
-| 6 | executor | `message` | 产出三条要点草稿 |
-| 7 | executor | `handoff` | 交审核；`edge: e-executor-reviewer` |
-| 8 | reviewer | `status` | 检查是否覆盖沙盘 + SSE |
-| 9 | reviewer | `message` | 通过或打回（样例为通过） |
-| 10 | reviewer | `handoff` | 回用户；`edge: e-reviewer-user` |
-| 11 | system | `complete` | `task_id` 结束 |
+| 1 | user | `task_start` | 用户提交任务；`edge: e-user-agent` |
+| 2 | agent | `status` | 同一助手理解任务：读 README → 提炼 → 回复 |
+| 3 | tools | `tool` / `status: running` | `tool: Read`；`edge: e-agent-tools` |
+| 4 | tools | `tool` / `status: ok` | 读取完成；`edge: e-tools-agent`（勿贴全文密钥） |
+| 5 | agent | `message` | 产出三条要点草稿 |
+| 6 | agent | `handoff` | 交付用户；`edge: e-agent-user` |
+| 7 | system | `complete` | `task_id` 结束 |
 
 ### 7.3 本地快速演练
 
@@ -269,14 +282,14 @@ curl -s http://127.0.0.1:8787/tasks | python3 -m json.tool
 验收：
 
 1. 返回 `task_id` 与 `runner_kind`（`dsh` 或 `fake-dsh`）。
-2. 直播事件流出现带同一 `task_id` 的 `task_start` → planner → executor（stdout 行）→ reviewer → `complete`/`error`。
+2. 直播事件流出现带同一 `task_id` 的 `task_start` → agent（stdout / `--json`）→ tools（工具行）→ agent → `e-agent-user` → `complete`/`error`。**不会**再伪造 planner / reviewer。
 3. 节点与连线随 `activeNodes` / `edge` 变化；可勾选「只看当前 task」。
 
 ### 8.2 dsh 安装与回退
 
 | 情况 | 行为 |
 |------|------|
-| `command -v dsh` 成功，或设置了 `DSH_BIN` | 执行：`dsh --profile "${DSH_PROFILE:-headless}" "<prompt>"` |
+| `command -v dsh` 成功，或设置了 `DSH_BIN` | 执行：`dsh --profile "${DSH_PROFILE:-headless}" [--json] "<prompt>"`（`DSH_JSON=0` 可关 `--json`） |
 | 否则 | 执行：`scripts/fake-dsh.sh --profile headless "<prompt>"`，事件里 `runner_kind: fake-dsh` |
 
 安装真实 dsh（DeepSeek Harness）请按其官方文档（npm / 发行包）。装好后**重启** `node server/sse-server.js`，`GET /runner` 应显示 `dsh_on_path: true`。
@@ -287,6 +300,7 @@ curl -s http://127.0.0.1:8787/tasks | python3 -m json.tool
 |------|------|
 | `DSH_BIN` | 强制指定 dsh 可执行文件路径 |
 | `DSH_PROFILE` | 默认 `headless`（一次性跑完退出） |
+| `DSH_JSON` | 设为 `0` 时不对真实 dsh 追加 `--json` |
 | `PORT` / `HOST` | 服务监听（默认 `127.0.0.1:8787`） |
 
 ### 8.3 本仓已实现 vs 仍待做

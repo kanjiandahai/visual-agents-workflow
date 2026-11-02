@@ -6,271 +6,178 @@
       id: "user",
       title: "用户",
       en: "User",
-      desc: "提出目标与约束，接收最终汇总。沙盘中代表真人发起方。",
+      desc: "提出目标与约束，接收 Agent 最终回复。沙盘中代表真人发起方。",
     },
     {
-      id: "planner",
-      title: "规划者",
-      en: "Planner",
-      desc: "理解目标、拆解步骤、向执行者派发任务，并在审核打回时调整计划。",
+      id: "agent",
+      title: "助手",
+      en: "Agent",
+      desc: "dsh 单 Agent：理解任务、推理、决定是否调用工具，并整理回复交给用户。",
     },
     {
-      id: "executor",
-      title: "执行者",
-      en: "Executor",
-      desc: "按规划执行子任务（检索、起草、整理），把中间产物交给审核者。",
-    },
-    {
-      id: "reviewer",
-      title: "审核者",
-      en: "Reviewer",
-      desc: "检查质量与合规，决定通过或打回；通过后由规划者汇总给用户。",
+      id: "tools",
+      title: "工具",
+      en: "Tools",
+      desc: "bash / Read / glob 等工具调用。亮起表示正在执行或刚返回结果。",
     },
   ];
 
   const EDGES = [
-    { id: "e-user-planner", from: "user", to: "planner", label: "提出任务" },
-    { id: "e-planner-executor", from: "planner", to: "executor", label: "派发" },
-    { id: "e-executor-reviewer", from: "executor", to: "reviewer", label: "提交审核" },
-    { id: "e-reviewer-planner", from: "reviewer", to: "planner", label: "审核结果" },
-    { id: "e-planner-user", from: "planner", to: "user", label: "汇总交付" },
+    { id: "e-user-agent", from: "user", to: "agent", label: "提出任务" },
+    { id: "e-agent-tools", from: "agent", to: "tools", label: "调用工具" },
+    { id: "e-tools-agent", from: "tools", to: "agent", label: "工具结果" },
+    { id: "e-agent-user", from: "agent", to: "user", label: "回复交付" },
   ];
 
   const AGENT_TITLE = Object.fromEntries(NODES.map((n) => [n.id, n.title]));
   AGENT_TITLE.system = "系统";
 
-  /** Scripted scenario: planning → dispatch → wait → review → summary */
+  /** Scripted scenario: single-agent read → draft → deliver (matches dsh headless) */
   const SCRIPT = [
     {
       id: "brief",
-      phase: "提出目标",
+      phase: "提出任务",
       activeNodes: ["user"],
-      activeEdge: "e-user-planner",
+      activeEdge: "e-user-agent",
       states: {
         user: "正在说明需求",
-        planner: "待命",
-        executor: "空闲",
-        reviewer: "空闲",
+        agent: "待命",
+        tools: "空闲",
       },
       focus: "user",
       message:
-        "用户 → 规划者\n请为「Q1 产品发布」起草对外公告：强调稳定性与迁移指引，语气专业克制，800 字内。",
-      toast: "用户提出任务目标",
+        "用户 → 助手\n请总结本仓库 README：用三条中文要点，并提到沙盘能力与 SSE。",
+      toast: "用户提出任务",
     },
     {
-      id: "plan",
-      phase: "规划拆解",
-      activeNodes: ["planner"],
+      id: "think",
+      phase: "理解与规划",
+      activeNodes: ["agent"],
       activeEdge: null,
       states: {
         user: "等待中",
-        planner: "拆解步骤中",
-        executor: "空闲",
-        reviewer: "空闲",
+        agent: "理解任务中",
+        tools: "空闲",
       },
-      focus: "planner",
+      focus: "agent",
       message:
-        "规划者（内部）\n1) 收集产品卖点与风险提示\n2) 执行者起草公告正文\n3) 审核者检查口径与敏感表述\n4) 汇总交付用户",
-      toast: "规划者拆解任务",
+        "助手（内部）\n计划：① 用 Read 读 README ② 提炼三条要点 ③ 回复用户。仍是同一 Agent，不另开角色。",
+      toast: "助手理解任务",
     },
     {
-      id: "dispatch",
-      phase: "派发执行",
-      activeNodes: ["planner", "executor"],
-      activeEdge: "e-planner-executor",
+      id: "call-tool",
+      phase: "调用工具",
+      activeNodes: ["agent", "tools"],
+      activeEdge: "e-agent-tools",
       states: {
         user: "等待中",
-        planner: "已派发，等待回报",
-        executor: "接收任务",
-        reviewer: "空闲",
+        agent: "发起工具调用",
+        tools: "Read 运行中…",
       },
-      focus: "executor",
+      focus: "tools",
       message:
-        "规划者 → 执行者\n子任务：撰写公告草稿。约束：专业克制、含迁移三步指引、避免绝对化承诺。",
-      toast: "任务已派发给执行者",
+        "助手 → 工具\ntool: Read · path=README.md · status=running",
+      toast: "助手调用 Read",
     },
     {
-      id: "work",
-      phase: "执行中",
-      activeNodes: ["executor"],
+      id: "tool-result",
+      phase: "工具结果",
+      activeNodes: ["tools", "agent"],
+      activeEdge: "e-tools-agent",
+      states: {
+        user: "等待中",
+        agent: "消化工具输出",
+        tools: "Read 完成",
+      },
+      focus: "agent",
+      message:
+        "工具 → 助手\ntool: Read ok · README 约 180 行（摘要回传，未贴全文）",
+      toast: "工具结果回到助手",
+    },
+    {
+      id: "draft",
+      phase: "起草回复",
+      activeNodes: ["agent"],
       activeEdge: null,
       states: {
         user: "等待中",
-        planner: "等待回报",
-        executor: "撰写草稿…",
-        reviewer: "空闲",
+        agent: "起草要点…",
+        tools: "空闲",
       },
-      focus: "executor",
+      focus: "agent",
       message:
-        "执行者（进行中）\n已生成大纲：开场价值主张 → 核心改进 → 迁移指引 → 支持渠道。正在填充细节…",
-      toast: "执行者工作中（模拟等待）",
+        "助手（起草）\n① 可点沙盘对齐 dsh 单 Agent\n② 剧本 / 直播双模式\n③ 本机 SSE + Task API 可接真实步骤",
+      toast: "助手起草回复",
     },
     {
-      id: "submit",
-      phase: "提交审核",
-      activeNodes: ["executor", "reviewer"],
-      activeEdge: "e-executor-reviewer",
-      states: {
-        user: "等待中",
-        planner: "等待审核",
-        executor: "已提交",
-        reviewer: "排队审阅",
-      },
-      focus: "reviewer",
-      message:
-        "执行者 → 审核者\n【草稿摘要】Q1 版本更稳、迁移三步走、提供回滚说明。请审口径与风险表述。",
-      toast: "草稿提交审核",
-    },
-    {
-      id: "review",
-      phase: "审核检查",
-      activeNodes: ["reviewer"],
-      activeEdge: null,
-      states: {
-        user: "等待中",
-        planner: "等待审核",
-        executor: "待命（可修订）",
-        reviewer: "检查质量中",
-      },
-      focus: "reviewer",
-      message:
-        "审核者（检查清单）\n✓ 无绝对化承诺\n✓ 含迁移与回滚\n△ 建议弱化「业界领先」措辞\n结论：有条件通过",
-      toast: "审核者检查中",
-    },
-    {
-      id: "feedback",
-      phase: "审核反馈",
-      activeNodes: ["reviewer", "planner"],
-      activeEdge: "e-reviewer-planner",
-      states: {
-        user: "等待中",
-        planner: "接收审核意见",
-        executor: "待命",
-        reviewer: "已反馈",
-      },
-      focus: "planner",
-      message:
-        "审核者 → 规划者\n有条件通过。请去掉「业界领先」，改为「显著提升稳定性」后即可汇总交付。",
-      toast: "审核结果回传规划者",
-    },
-    {
-      id: "revise",
-      phase: "微调定稿",
-      activeNodes: ["planner", "executor"],
-      activeEdge: "e-planner-executor",
-      states: {
-        user: "等待中",
-        planner: "安排微调",
-        executor: "按意见修订",
-        reviewer: "等待终稿确认",
-      },
-      focus: "executor",
-      message:
-        "规划者 → 执行者\n请按审核意见替换措辞并回传终稿（无需再开新需求）。",
-      toast: "执行者按意见微调",
-    },
-    {
-      id: "summary",
-      phase: "汇总交付",
-      activeNodes: ["planner", "user"],
-      activeEdge: "e-planner-user",
+      id: "deliver",
+      phase: "回复交付",
+      activeNodes: ["agent", "user"],
+      activeEdge: "e-agent-user",
       states: {
         user: "查收成果",
-        planner: "已交付",
-        executor: "完成",
-        reviewer: "完成",
+        agent: "已交付",
+        tools: "空闲",
       },
       focus: "user",
       message:
-        "规划者 → 用户\n【交付】Q1 产品发布公告终稿已就绪（已按审核修订）。\n附件：公告正文 · 迁移三步指引 · 风险说明。",
-      toast: "汇总已交付给用户 · 剧本结束",
+        "助手 → 用户\n【交付】三条要点已就绪：单 Agent 可视化 · 剧本/直播 · 本机 dsh/SSE。",
+      toast: "回复已交付 · 剧本结束",
     },
   ];
 
   /** Browser-only demo live event sequence (Pages-safe). */
   const DEMO_LIVE_EVENTS = [
-    { agent: "system", type: "status", message: "演示直播开始 · 假数据定时注入，非真实 Agent" },
+    { agent: "system", type: "status", message: "演示直播开始 · 假数据定时注入，对齐单 Agent（非真实 dsh）" },
     {
       agent: "user",
       type: "handoff",
-      message: "请为「Q1 产品发布」起草对外公告，专业克制，800 字内。",
-      edge: "e-user-planner",
+      message: "请总结本仓库 README：三条中文要点，提到沙盘与 SSE。",
+      edge: "e-user-agent",
       state: "正在说明需求",
-      activeNodes: ["user"],
+      activeNodes: ["user", "agent"],
     },
     {
-      agent: "planner",
+      agent: "agent",
       type: "status",
-      message: "拆解：收集卖点 → 起草 → 审核 → 汇总",
-      state: "拆解步骤中",
-      activeNodes: ["planner"],
+      message: "理解任务：读 README → 提炼 → 回复（同一 Agent）",
+      state: "理解任务中",
+      activeNodes: ["agent"],
     },
     {
-      agent: "planner",
-      type: "dispatch",
-      message: "派发：撰写公告草稿（含迁移三步指引）",
-      edge: "e-planner-executor",
-      state: "已派发，等待回报",
-      activeNodes: ["planner", "executor"],
-    },
-    {
-      agent: "executor",
+      agent: "tools",
       type: "tool",
-      message: "tool: draft_outline → 价值主张 / 改进 / 迁移 / 支持",
-      state: "撰写草稿…",
-      activeNodes: ["executor"],
+      tool: "Read",
+      status: "running",
+      message: "tool: Read · README.md",
+      edge: "e-agent-tools",
+      state: "Read 运行中…",
+      activeNodes: ["agent", "tools"],
     },
     {
-      agent: "executor",
+      agent: "tools",
+      type: "tool",
+      tool: "Read",
+      status: "ok",
+      message: "tool: Read ok · 约 180 行",
+      edge: "e-tools-agent",
+      state: "Read 完成",
+      activeNodes: ["tools", "agent"],
+    },
+    {
+      agent: "agent",
       type: "message",
-      message: "草稿摘要已生成，准备提交审核",
-      state: "已提交",
-      activeNodes: ["executor"],
+      message: "草稿：① 单 Agent 沙盘 ② 剧本/直播 ③ 本机 SSE / dsh",
+      state: "起草要点…",
+      activeNodes: ["agent"],
     },
     {
-      agent: "executor",
+      agent: "agent",
       type: "handoff",
-      message: "提交审核：稳定性 + 迁移三步 + 回滚说明",
-      edge: "e-executor-reviewer",
-      activeNodes: ["executor", "reviewer"],
-    },
-    {
-      agent: "reviewer",
-      type: "status",
-      message: "检查口径与敏感表述…",
-      state: "检查质量中",
-      activeNodes: ["reviewer"],
-    },
-    {
-      agent: "reviewer",
-      type: "handoff",
-      message: "有条件通过：弱化「业界领先」→「显著提升稳定性」",
-      edge: "e-reviewer-planner",
-      state: "已反馈",
-      activeNodes: ["reviewer", "planner"],
-    },
-    {
-      agent: "planner",
-      type: "dispatch",
-      message: "安排微调措辞后交付",
-      edge: "e-planner-executor",
-      state: "安排微调",
-      activeNodes: ["planner", "executor"],
-    },
-    {
-      agent: "executor",
-      type: "message",
-      message: "终稿已修订完成",
-      state: "完成",
-      activeNodes: ["executor"],
-    },
-    {
-      agent: "planner",
-      type: "handoff",
-      message: "【交付】公告终稿 · 迁移指引 · 风险说明",
-      edge: "e-planner-user",
+      message: "【交付】三条要点已就绪",
+      edge: "e-agent-user",
       state: "已交付",
-      activeNodes: ["planner", "user"],
+      activeNodes: ["agent", "user"],
     },
     {
       agent: "system",
@@ -580,7 +487,7 @@
       }
       el.panelType.textContent = "—";
       el.panelDesc.textContent =
-        "点击画布上的角色或消息边，查看角色职责与最近一次交接内容。";
+        "点击画布上的节点或消息边，查看职责与最近一次交接内容（用户 / 助手 / 工具）。";
       el.panelMessage.textContent =
         state.mode === "live"
           ? state.events.length
@@ -689,7 +596,7 @@
       el.panelBadge.className = "badge done";
       return;
     }
-    const delay = state.step === 3 ? 1600 : 1100;
+    const delay = state.step === 2 ? 1600 : 1100;
     state.timer = setTimeout(() => {
       applyStep(state.step + 1);
       scheduleNext();
@@ -1041,7 +948,7 @@
       state.nodeStates = idleNodeStates();
       state.activeNodes = new Set();
       state.activeEdge = null;
-      showToast("直播模式：演示直播 / SSE / 本机 dsh 提交真实任务");
+      showToast("直播模式：单 Agent（用户/助手/工具）· 演示直播 / SSE / 本机 dsh");
       setLiveStatus(state.es ? "live" : "idle");
       renderEventList();
       applyHighlights();

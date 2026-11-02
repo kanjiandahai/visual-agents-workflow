@@ -5,9 +5,9 @@
 [![Live demo](https://img.shields.io/badge/GitHub%20Pages-live%20demo-blue)](https://kanjiandahai.github.io/visual-agents-workflow/)
 [![Pages Check](https://github.com/kanjiandahai/visual-agents-workflow/actions/workflows/pages-check.yml/badge.svg)](https://github.com/kanjiandahai/visual-agents-workflow/actions/workflows/pages-check.yml)
 
-可点击的多 Agent 工作流沙盘 —— **剧本模拟** + **近似实时直播** + **第一期本机 dsh 真实任务**。
+可点击的**单 Agent** 工作流沙盘（对齐 dsh headless）—— **剧本模拟** + **近似实时直播** + **第一期本机 dsh 真实任务**。
 
-> **Clickable multi-agent workflow sandbox** (static HTML + local SSE / Task API). Demo a Planner / Executor / Reviewer loop, stream live events, or run a real prompt via local `dsh`.
+> **Clickable single-agent workflow sandbox** (static HTML + local SSE / Task API). Visualizes **User ↔ Agent ↔ Tools** as in `dsh --profile headless`, streams live events, or runs a real prompt via local `dsh`.
 
 ## 在线演示 / Live demo
 
@@ -58,18 +58,21 @@ curl -s -X POST http://127.0.0.1:8787/tasks \
 
 ## 沙盘能做什么
 
-| 角色 | 职责 |
+画布对齐 **dsh headless 单 Agent**（不再虚构规划者 / 执行者 / 审核者）：
+
+| 节点 | 职责 |
 |------|------|
-| **用户 (User)** | 提出任务目标 |
-| **规划者 (Planner)** | 拆解步骤、派发任务 |
-| **执行者 (Executor)** | 执行子任务、回报结果 |
-| **审核者 (Reviewer)** | 检查质量、决定通过或打回 |
+| **用户 (User)** | 提出任务，接收最终回复 |
+| **助手 (Agent)** | 唯一 Agent：理解、推理、决定是否调工具、整理交付 |
+| **工具 (Tools)** | bash / Read / glob 等；亮起表示工具调用或结果回传 |
+
+连线：`e-user-agent` 提出任务 · `e-agent-tools` 调用工具 · `e-tools-agent` 工具结果 · `e-agent-user` 回复交付。
 
 ### 剧本模拟
 
-- **播放 / 暂停 / 单步 / 重置** —— 按内置剧本推进
+- **播放 / 暂停 / 单步 / 重置** —— 按内置单 Agent 剧本推进
 - **节点与连线** —— 高亮当前 handoff；点击查看详情
-- **剧本时间轴** —— 规划 → 派发 → 等待 → 审核 → 汇总
+- **剧本时间轴** —— 提出任务 → 理解 → 调工具 → 工具结果 → 起草 → 交付
 
 ### 直播模式
 
@@ -99,23 +102,25 @@ curl -s -X POST http://127.0.0.1:8787/tasks \
 ```json
 {
   "ts": "2026-11-02T07:00:01.000Z",
-  "agent": "planner",
-  "type": "dispatch",
-  "message": "派发起草子任务",
-  "edge": "e-planner-executor",
-  "state": "已派发，等待回报",
-  "activeNodes": ["planner", "executor"]
+  "agent": "tools",
+  "type": "tool",
+  "tool": "Read",
+  "status": "running",
+  "message": "tool: Read · README.md",
+  "edge": "e-agent-tools",
+  "state": "Read 运行中…",
+  "activeNodes": ["agent", "tools"]
 }
 ```
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `ts` | 否 | ISO 时间；缺省为接收时刻 |
-| `agent` | 建议 | `user` / `planner` / `executor` / `reviewer` / `system` |
-| `type` | 建议 | `status` / `dispatch` / `tool` / `message` / `handoff` / `complete` / `error` |
+| `agent` | 建议 | `user` / `agent` / `tools` / `system`（日志可用；画布三节点） |
+| `type` | 建议 | `task_start` / `status` / `tool` / `message` / `handoff` / `complete` / `error` |
 | `message` | 建议 | 短摘要（事件流与节点「最近消息」） |
-| `edge` | 否 | 高亮连线：`e-user-planner` 等 |
-| `state` | 否 | 覆盖该 agent 节点状态文案 |
+| `edge` | 否 | `e-user-agent` / `e-agent-tools` / `e-tools-agent` / `e-agent-user` |
+| `state` | 否 | 覆盖该节点状态文案 |
 | `activeNodes` | 否 | 同时点亮的节点 id 列表 |
 | `task_id` / `step` / `tool` / `status` | 真实任务建议 | 第一期已透传并在事件流展示 |
 
@@ -139,27 +144,30 @@ node server/sse-server.js
 ### curl 推送示例
 
 ```bash
-# 规划者派发
+# 用户提出任务
 curl -s -X POST http://127.0.0.1:8787/emit \
   -H 'Content-Type: application/json' \
   -d '{
-    "agent":"planner",
-    "type":"dispatch",
-    "message":"派发：撰写公告草稿",
-    "edge":"e-planner-executor",
-    "state":"已派发，等待回报",
-    "activeNodes":["planner","executor"]
+    "agent":"user",
+    "type":"handoff",
+    "message":"请总结 README",
+    "edge":"e-user-agent",
+    "state":"正在说明需求",
+    "activeNodes":["user","agent"]
   }'
 
-# 执行者工具调用
+# 助手调用工具
 curl -s -X POST http://127.0.0.1:8787/emit \
   -H 'Content-Type: application/json' \
   -d '{
-    "agent":"executor",
+    "agent":"tools",
     "type":"tool",
-    "message":"tool: draft_outline ok",
-    "state":"撰写草稿…",
-    "activeNodes":["executor"]
+    "tool":"Read",
+    "status":"running",
+    "message":"tool: Read · README.md",
+    "edge":"e-agent-tools",
+    "state":"Read 运行中…",
+    "activeNodes":["agent","tools"]
   }'
 
 # 结束
@@ -170,7 +178,7 @@ curl -s -X POST http://127.0.0.1:8787/emit \
 
 ### 真实 Agent / 例程怎么接
 
-在每一步（派发、工具调用、交还、完成）用 HTTP POST 同一 schema 即可，例如 shell：
+在每一步（推理、工具调用、工具结果、交付、完成）用 HTTP POST 同一 schema 即可，例如 shell：
 
 ```bash
 emit() {
@@ -179,9 +187,9 @@ emit() {
     -d "$1" >/dev/null
 }
 
-emit '{"agent":"planner","type":"status","message":"开始规划","state":"拆解步骤中","activeNodes":["planner"]}'
-# …真实工作…
-emit '{"agent":"planner","type":"dispatch","message":"已派发","edge":"e-planner-executor","activeNodes":["planner","executor"]}'
+emit '{"agent":"agent","type":"status","message":"理解任务中","state":"思考中…","activeNodes":["agent"]}'
+# …真实工作 / 工具调用…
+emit '{"agent":"tools","type":"tool","tool":"Read","status":"ok","message":"tool: Read ok","edge":"e-tools-agent","activeNodes":["tools","agent"]}'
 ```
 
 Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥（默认只绑 `127.0.0.1`；若暴露到公网请自行加鉴权，本仓库不提供密钥配置）。
@@ -213,7 +221,7 @@ docs/
   sample/
 server/
   sse-server.js           # SSE + /emit + /tasks + 静态 docs
-  task-runner.js          # dsh / fake-dsh 执行与事件编排
+  task-runner.js          # dsh / fake-dsh → 单 Agent 事件映射
   package.json
   README.md
 scripts/

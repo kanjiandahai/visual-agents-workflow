@@ -1,8 +1,7 @@
 {"ts":"2026-11-02T07:00:00.000Z","agent":"system","type":"status","message":"run started"}
-{"ts":"2026-11-02T07:00:01.000Z","agent":"user","type":"handoff","message":"请起草 Q1 产品发布公告","edge":"e-user-planner","state":"正在说明需求","activeNodes":["user"]}
-{"ts":"2026-11-02T07:00:03.000Z","agent":"planner","type":"dispatch","message":"派发起草子任务","edge":"e-planner-executor","state":"已派发，等待回报","activeNodes":["planner","executor"]}
-{"ts":"2026-11-02T07:00:06.000Z","agent":"executor","type":"tool","message":"tool: web_search query=Q1 release notes","state":"检索中","activeNodes":["executor"]}
-{"ts":"2026-11-02T07:00:09.000Z","agent":"executor","type":"handoff","message":"提交草稿审核","edge":"e-executor-reviewer","state":"已提交","activeNodes":["executor","reviewer"]}
-{"ts":"2026-11-02T07:00:12.000Z","agent":"reviewer","type":"handoff","message":"有条件通过","edge":"e-reviewer-planner","state":"已反馈","activeNodes":["reviewer","planner"]}
-{"ts":"2026-11-02T07:00:15.000Z","agent":"planner","type":"handoff","message":"终稿交付","edge":"e-planner-user","state":"已交付","activeNodes":["planner","user"]}
-{"ts":"2026-11-02T07:00:16.000Z","agent":"system","type":"complete","message":"run complete"}
+{"ts":"2026-11-02T07:00:01.000Z","agent":"user","type":"handoff","message":"请总结本仓库 README","edge":"e-user-agent","state":"正在说明需求","activeNodes":["user","agent"]}
+{"ts":"2026-11-02T07:00:03.000Z","agent":"agent","type":"status","message":"理解任务：读 README → 提炼 → 回复","state":"理解任务中","activeNodes":["agent"]}
+{"ts":"2026-11-02T07:00:05.000Z","agent":"tools","type":"tool","tool":"Read","status":"running","message":"tool: Read · README.md","edge":"e-agent-tools","state":"Read 运行中…","activeNodes":["agent","tools"]}
+{"ts":"2026-11-02T07:00:07.000Z","agent":"tools","type":"tool","tool":"Read","status":"ok","message":"tool: Read ok","edge":"e-tools-agent","state":"Read 完成","activeNodes":["tools","agent"]}
+{"ts":"2026-11-02T07:00:10.000Z","agent":"agent","type":"handoff","message":"【交付】三条要点已就绪","edge":"e-agent-user","state":"已交付","activeNodes":["agent","user"]}
+{"ts":"2026-11-02T07:00:11.000Z","agent":"system","type":"complete","message":"run complete"}

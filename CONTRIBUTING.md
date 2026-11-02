@@ -1,6 +1,6 @@
 # 贡献指南 · Contributing
 
-感谢关注 [visual-agents-workflow](https://github.com/kanjiandahai/visual-agents-workflow)。本仓是**可点击的多 Agent 工作流沙盘**（静态页 + 可选本机 SSE / Task API）。欢迎修文档、改 UI、加强事件桥或补样例。
+感谢关注 [visual-agents-workflow](https://github.com/kanjiandahai/visual-agents-workflow)。本仓是**可点击的单 Agent 工作流沙盘**（对齐 dsh headless）（静态页 + 可选本机 SSE / Task API）。欢迎修文档、改 UI、加强事件桥或补样例。
 
 English: fork → branch → keep `docs/` demo working → open a PR. Prefer Chinese or bilingual notes where the repo is already zh-CN first. **Never commit secrets or API keys.**
 
