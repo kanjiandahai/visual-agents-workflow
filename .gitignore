@@ -42,3 +42,6 @@ coverage/
 *.temp
 .vercel
 .netlify
+
+# Agent / local scratch
+.search-tmp/

@@ -1,14 +1,26 @@
 # visual-agents-workflow
 
+[![GitHub stars](https://img.shields.io/github/stars/kanjiandahai/visual-agents-workflow?style=social)](https://github.com/kanjiandahai/visual-agents-workflow/stargazers)
+[![License: MIT](https://img.shields.io/github/license/kanjiandahai/visual-agents-workflow)](LICENSE)
+[![Live demo](https://img.shields.io/badge/GitHub%20Pages-live%20demo-blue)](https://kanjiandahai.github.io/visual-agents-workflow/)
+[![Pages Check](https://github.com/kanjiandahai/visual-agents-workflow/actions/workflows/pages-check.yml/badge.svg)](https://github.com/kanjiandahai/visual-agents-workflow/actions/workflows/pages-check.yml)
+
 可点击的多 Agent 工作流沙盘 —— **剧本模拟** + **近似实时直播** + **第一期本机 dsh 真实任务**。
 
 > **Clickable multi-agent workflow sandbox** (static HTML + local SSE / Task API). Demo a Planner / Executor / Reviewer loop, stream live events, or run a real prompt via local `dsh`.
 
-## 在线演示
+## 在线演示 / Live demo
 
 **https://kanjiandahai.github.io/visual-agents-workflow/**
 
 （源码在 `docs/`，Pages 指向该目录。GitHub Pages **没有后端**，线上请用「演示直播」。）
+
+## 曝光 / Discoverability
+
+- 机器可读：[`llms.txt`](./llms.txt) · [Pages `llms.txt`](https://kanjiandahai.github.io/visual-agents-workflow/llms.txt)
+- 沙盘演示：https://kanjiandahai.github.io/visual-agents-workflow/
+- 真实任务：[`docs/REAL_TASKS.md`](./docs/REAL_TASKS.md)
+- 本机服务：`node server/sse-server.js` → `http://127.0.0.1:8787`（`/events` · `/emit` · `/tasks` · `/runner`）
 
 ## 本地打开
 
@@ -192,10 +204,12 @@ Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥�
 
 ```
 docs/
-  index.html              # 页面骨架（剧本 / 直播 / 提交任务）
+  index.html              # 页面骨架（剧本 / 直播 / 提交任务）+ OG/SEO
   styles.css
   app.js                  # 状态机、剧本、演示直播、SSE、Task 表单
   REAL_TASKS.md           # 真实任务对接（含第一期 dsh）
+  llms.txt                # Pages 副本（机器可读）
+  robots.txt · sitemap.xml · og.svg
   sample/
 server/
   sse-server.js           # SSE + /emit + /tasks + 静态 docs
@@ -204,6 +218,10 @@ server/
   README.md
 scripts/
   fake-dsh.sh             # 无 dsh 时的演示 CLI
+.github/workflows/
+  pages-check.yml         # 关键文件与 meta 检查
+llms.txt                  # 机器可读项目摘要
+CONTRIBUTING.md
 LICENSE                   # MIT
 README.md
 .gitignore
