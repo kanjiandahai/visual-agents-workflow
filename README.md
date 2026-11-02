@@ -152,6 +152,14 @@ emit '{"agent":"planner","type":"dispatch","message":"已派发","edge":"e-plann
 
 Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥（默认只绑 `127.0.0.1`；若暴露到公网请自行加鉴权，本仓库不提供密钥配置）。
 
+## 真实用户任务对接
+
+演示直播 ≠ 真实任务。若要把**用户真实任务**的执行过程推到沙盘，请读：
+
+**[docs/REAL_TASKS.md](./docs/REAL_TASKS.md)** —— 目标、架构（Task API → SSE → Live）、真实运行事件 schema（`task_id` / `step` / `tool` / `status`）、安全、分阶段计划（curl → Bot/例程 → 托管 runner）、本仓与执行器职责划分，以及样例「总结这个 README」事件序列。
+
+样例 NDJSON：[`docs/sample/real-task-readme-summarize.jsonl`](./docs/sample/real-task-readme-summarize.jsonl)
+
 ## 开启 GitHub Pages
 
 1. 仓库 **Settings → Pages**
