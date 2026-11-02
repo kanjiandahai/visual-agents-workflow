@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="可点击的多 Agent 工作流沙盘：规划 → 派发 → 执行 → 审核 → 汇总" />
+  <meta name="description" content="可点击的多 Agent 工作流沙盘：剧本模拟 + 近似实时直播执行过程" />
   <title>多 Agent 工作流沙盘 · visual-agents-workflow</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -14,16 +14,42 @@
         <span class="brand-mark" aria-hidden="true"></span>
         <div>
           <h1>多 Agent 工作流沙盘</h1>
-          <p class="subtitle">点击节点 / 连线查看详情 · 播放剧本模拟协作</p>
+          <p class="subtitle">剧本模拟 · 近似实时直播 · 点击节点查看详情</p>
         </div>
       </div>
-      <div class="controls" role="group" aria-label="播放控制">
+      <div class="mode-tabs" role="tablist" aria-label="运行模式">
+        <button type="button" class="mode-tab active" role="tab" id="tab-script" aria-selected="true" data-mode="script">剧本模拟</button>
+        <button type="button" class="mode-tab" role="tab" id="tab-live" aria-selected="false" data-mode="live">直播</button>
+      </div>
+    </header>
+
+    <div class="toolbar" id="toolbar-script">
+      <div class="controls" role="group" aria-label="剧本播放控制">
         <button type="button" id="btn-play" class="btn primary" title="播放">▶ 播放</button>
         <button type="button" id="btn-pause" class="btn" title="暂停" disabled>⏸ 暂停</button>
         <button type="button" id="btn-step" class="btn" title="单步">⏭ 单步</button>
         <button type="button" id="btn-reset" class="btn ghost" title="重置">↺ 重置</button>
       </div>
-    </header>
+    </div>
+
+    <div class="toolbar" id="toolbar-live" hidden>
+      <div class="live-status-wrap" aria-live="polite">
+        <span class="live-dot" id="live-dot" data-status="idle"></span>
+        <span class="live-status-text" id="live-status-text">未连接</span>
+        <span class="live-badge" id="live-badge" hidden>演示直播</span>
+      </div>
+      <div class="controls" role="group" aria-label="直播控制">
+        <button type="button" id="btn-live-demo" class="btn primary" title="浏览器内定时注入事件">▶ 开始演示直播</button>
+        <button type="button" id="btn-live-stop-demo" class="btn" title="停止演示" disabled>⏹ 停止演示</button>
+        <button type="button" id="btn-live-connect" class="btn" title="连接本地 SSE">🔌 连接 SSE</button>
+        <button type="button" id="btn-live-disconnect" class="btn" title="断开" disabled>断开</button>
+        <button type="button" id="btn-live-clear" class="btn ghost" title="清空事件流">清空</button>
+      </div>
+      <label class="sse-url-label">
+        SSE 地址
+        <input type="url" id="sse-url" class="sse-url" value="http://127.0.0.1:8787/events" spellcheck="false" />
+      </label>
+    </div>
 
     <main class="main">
       <section class="stage-wrap" aria-label="工作流画布">
@@ -32,9 +58,16 @@
           <div class="nodes" id="nodes"></div>
           <div class="toast" id="toast" hidden></div>
         </div>
-        <div class="timeline" aria-label="剧本时间轴">
+        <div class="timeline" id="timeline-wrap" aria-label="剧本时间轴">
           <div class="timeline-label">剧本进度</div>
           <ol class="timeline-steps" id="timeline"></ol>
+        </div>
+        <div class="event-stream" id="event-stream-wrap" hidden aria-label="事件流">
+          <div class="event-stream-head">
+            <div class="timeline-label">事件流 <span class="hint">近似实时</span></div>
+            <span class="event-count" id="event-count">0 条</span>
+          </div>
+          <ol class="event-list" id="event-list"></ol>
         </div>
       </section>
 
@@ -63,13 +96,13 @@
         </div>
         <div class="panel-block">
           <h3>场景简介</h3>
-          <p id="scenario-blurb">示例任务：为「Q1 产品发布」生成一份对外公告草稿，经规划、执行、审核后汇总给用户。</p>
+          <p id="scenario-blurb">示例任务：为「Q1 产品发布」生成一份对外公告草稿，经规划、执行、审核后汇总给用户。直播模式可看事件流逐条点亮节点。</p>
         </div>
       </aside>
     </main>
 
     <footer class="footer">
-      <span>visual-agents-workflow · MIT · 假数据剧本，不连接真实 Agent</span>
+      <span>visual-agents-workflow · MIT · 剧本 / 演示直播 / 可选本地 SSE</span>
       <a href="https://github.com/kanjiandahai/visual-agents-workflow" target="_blank" rel="noopener">GitHub</a>
     </footer>
   </div>

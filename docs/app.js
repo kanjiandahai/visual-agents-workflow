@@ -36,6 +36,9 @@
     { id: "e-planner-user", from: "planner", to: "user", label: "汇总交付" },
   ];
 
+  const AGENT_TITLE = Object.fromEntries(NODES.map((n) => [n.id, n.title]));
+  AGENT_TITLE.system = "系统";
+
   /** Scripted scenario: planning → dispatch → wait → review → summary */
   const SCRIPT = [
     {
@@ -184,20 +187,127 @@
     },
   ];
 
+  /** Browser-only demo live event sequence (Pages-safe). */
+  const DEMO_LIVE_EVENTS = [
+    { agent: "system", type: "status", message: "演示直播开始 · 假数据定时注入，非真实 Agent" },
+    {
+      agent: "user",
+      type: "handoff",
+      message: "请为「Q1 产品发布」起草对外公告，专业克制，800 字内。",
+      edge: "e-user-planner",
+      state: "正在说明需求",
+      activeNodes: ["user"],
+    },
+    {
+      agent: "planner",
+      type: "status",
+      message: "拆解：收集卖点 → 起草 → 审核 → 汇总",
+      state: "拆解步骤中",
+      activeNodes: ["planner"],
+    },
+    {
+      agent: "planner",
+      type: "dispatch",
+      message: "派发：撰写公告草稿（含迁移三步指引）",
+      edge: "e-planner-executor",
+      state: "已派发，等待回报",
+      activeNodes: ["planner", "executor"],
+    },
+    {
+      agent: "executor",
+      type: "tool",
+      message: "tool: draft_outline → 价值主张 / 改进 / 迁移 / 支持",
+      state: "撰写草稿…",
+      activeNodes: ["executor"],
+    },
+    {
+      agent: "executor",
+      type: "message",
+      message: "草稿摘要已生成，准备提交审核",
+      state: "已提交",
+      activeNodes: ["executor"],
+    },
+    {
+      agent: "executor",
+      type: "handoff",
+      message: "提交审核：稳定性 + 迁移三步 + 回滚说明",
+      edge: "e-executor-reviewer",
+      activeNodes: ["executor", "reviewer"],
+    },
+    {
+      agent: "reviewer",
+      type: "status",
+      message: "检查口径与敏感表述…",
+      state: "检查质量中",
+      activeNodes: ["reviewer"],
+    },
+    {
+      agent: "reviewer",
+      type: "handoff",
+      message: "有条件通过：弱化「业界领先」→「显著提升稳定性」",
+      edge: "e-reviewer-planner",
+      state: "已反馈",
+      activeNodes: ["reviewer", "planner"],
+    },
+    {
+      agent: "planner",
+      type: "dispatch",
+      message: "安排微调措辞后交付",
+      edge: "e-planner-executor",
+      state: "安排微调",
+      activeNodes: ["planner", "executor"],
+    },
+    {
+      agent: "executor",
+      type: "message",
+      message: "终稿已修订完成",
+      state: "完成",
+      activeNodes: ["executor"],
+    },
+    {
+      agent: "planner",
+      type: "handoff",
+      message: "【交付】公告终稿 · 迁移指引 · 风险说明",
+      edge: "e-planner-user",
+      state: "已交付",
+      activeNodes: ["planner", "user"],
+    },
+    {
+      agent: "system",
+      type: "complete",
+      message: "演示直播结束",
+      activeNodes: ["user"],
+    },
+  ];
+
   const state = {
+    mode: "script", // script | live
     step: -1,
     playing: false,
     timer: null,
-    selected: null, // { kind: 'node'|'edge', id }
+    selected: null,
     lastByNode: Object.fromEntries(NODES.map((n) => [n.id, "（尚未开始）"])),
     lastByEdge: Object.fromEntries(EDGES.map((e) => [e.id, "（尚未开始）"])),
     nodeStates: Object.fromEntries(NODES.map((n) => [n.id, "空闲"])),
+    activeNodes: new Set(),
+    activeEdge: null,
+    // live
+    liveStatus: "idle", // idle | connecting | live | demo | disconnected | error
+    events: [],
+    es: null,
+    demoTimer: null,
+    demoIndex: 0,
+    demoRunning: false,
   };
 
   const el = {
     nodes: document.getElementById("nodes"),
     edges: document.getElementById("edges"),
     timeline: document.getElementById("timeline"),
+    timelineWrap: document.getElementById("timeline-wrap"),
+    eventStreamWrap: document.getElementById("event-stream-wrap"),
+    eventList: document.getElementById("event-list"),
+    eventCount: document.getElementById("event-count"),
     toast: document.getElementById("toast"),
     panelTitle: document.getElementById("panel-title"),
     panelBadge: document.getElementById("panel-badge"),
@@ -210,6 +320,19 @@
     btnStep: document.getElementById("btn-step"),
     btnReset: document.getElementById("btn-reset"),
     stage: document.getElementById("stage"),
+    toolbarScript: document.getElementById("toolbar-script"),
+    toolbarLive: document.getElementById("toolbar-live"),
+    tabScript: document.getElementById("tab-script"),
+    tabLive: document.getElementById("tab-live"),
+    liveDot: document.getElementById("live-dot"),
+    liveStatusText: document.getElementById("live-status-text"),
+    liveBadge: document.getElementById("live-badge"),
+    btnLiveDemo: document.getElementById("btn-live-demo"),
+    btnLiveStopDemo: document.getElementById("btn-live-stop-demo"),
+    btnLiveConnect: document.getElementById("btn-live-connect"),
+    btnLiveDisconnect: document.getElementById("btn-live-disconnect"),
+    btnLiveClear: document.getElementById("btn-live-clear"),
+    sseUrl: document.getElementById("sse-url"),
   };
 
   function nodeById(id) {
@@ -218,6 +341,10 @@
 
   function edgeById(id) {
     return EDGES.find((e) => e.id === id);
+  }
+
+  function idleNodeStates() {
+    return Object.fromEntries(NODES.map((n) => [n.id, "空闲"]));
   }
 
   function renderTimeline() {
@@ -229,6 +356,42 @@
       if (i === state.step) li.classList.add("current");
       el.timeline.appendChild(li);
     });
+  }
+
+  function formatClock(ts) {
+    try {
+      const d = ts ? new Date(ts) : new Date();
+      if (Number.isNaN(d.getTime())) return "--:--:--";
+      return d.toLocaleTimeString("zh-CN", { hour12: false });
+    } catch {
+      return "--:--:--";
+    }
+  }
+
+  function renderEventList() {
+    el.eventList.innerHTML = "";
+    const slice = state.events.slice(-80).reverse();
+    slice.forEach((ev, idx) => {
+      const li = document.createElement("li");
+      if (idx === 0) li.classList.add("fresh");
+      const agent = ev.agent || "system";
+      li.innerHTML = `
+        <span class="ts">${formatClock(ev.ts)}</span>
+        <span class="agent" data-agent="${agent}">${AGENT_TITLE[agent] || agent}</span>
+        <span class="etype">${ev.type || "event"}</span>
+        <span class="payload">${escapeHtml(ev.message || "")}</span>
+      `;
+      el.eventList.appendChild(li);
+    });
+    el.eventCount.textContent = `${state.events.length} 条`;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function renderNodes() {
@@ -293,7 +456,6 @@
     EDGES.forEach((edge) => {
       const a = nodeCenter(edge.from);
       const b = nodeCenter(edge.to);
-      // shorten ends so arrow doesn't sit under node
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
       const pad = 46;
       const a2 = { x: a.x + Math.cos(ang) * pad, y: a.y + Math.sin(ang) * pad };
@@ -328,10 +490,21 @@
     el.toast.textContent = text;
   }
 
-  function applyHighlights() {
+  function currentActiveNodes() {
+    if (state.mode === "live") return state.activeNodes;
     const step = state.step >= 0 ? SCRIPT[state.step] : null;
-    const activeNodes = new Set(step ? step.activeNodes : []);
-    const activeEdge = step ? step.activeEdge : null;
+    return new Set(step ? step.activeNodes : []);
+  }
+
+  function currentActiveEdge() {
+    if (state.mode === "live") return state.activeEdge;
+    const step = state.step >= 0 ? SCRIPT[state.step] : null;
+    return step ? step.activeEdge : null;
+  }
+
+  function applyHighlights() {
+    const activeNodes = currentActiveNodes();
+    const activeEdge = currentActiveEdge();
 
     el.nodes.querySelectorAll(".node").forEach((node) => {
       const id = node.dataset.id;
@@ -357,20 +530,42 @@
   function updatePanel() {
     if (!state.selected) {
       el.panelTitle.textContent = "选择一个节点或连线";
-      el.panelBadge.textContent = state.step < 0 ? "空闲" : "运行中";
-      el.panelBadge.className = "badge" + (state.step >= 0 ? " busy" : "");
+      if (state.mode === "live") {
+        const labels = {
+          idle: "未连接",
+          connecting: "连接中",
+          live: "直播中",
+          demo: "演示直播",
+          disconnected: "已断开",
+          error: "出错",
+        };
+        el.panelBadge.textContent = labels[state.liveStatus] || "直播";
+        el.panelBadge.className =
+          "badge" +
+          (state.liveStatus === "live" || state.liveStatus === "demo" ? " busy" : "");
+        el.panelState.textContent = `${state.events.length} 条事件`;
+      } else {
+        el.panelBadge.textContent = state.step < 0 ? "空闲" : "运行中";
+        el.panelBadge.className = "badge" + (state.step >= 0 ? " busy" : "");
+        el.panelState.textContent = state.step < 0 ? "未开始" : SCRIPT[state.step].phase;
+      }
       el.panelType.textContent = "—";
-      el.panelState.textContent = state.step < 0 ? "未开始" : SCRIPT[state.step].phase;
       el.panelDesc.textContent =
         "点击画布上的角色或消息边，查看角色职责与最近一次交接内容。";
       el.panelMessage.textContent =
-        state.step >= 0 ? SCRIPT[state.step].message : "（尚未开始）";
+        state.mode === "live"
+          ? state.events.length
+            ? state.events[state.events.length - 1].message
+            : "（等待事件…）"
+          : state.step >= 0
+            ? SCRIPT[state.step].message
+            : "（尚未开始）";
       return;
     }
 
     if (state.selected.kind === "node") {
       const n = nodeById(state.selected.id);
-      const busy = (SCRIPT[state.step]?.activeNodes || []).includes(n.id);
+      const busy = currentActiveNodes().has(n.id);
       el.panelTitle.textContent = `${n.title} · ${n.en}`;
       el.panelBadge.textContent = busy ? "活跃" : state.nodeStates[n.id];
       el.panelBadge.className = "badge" + (busy ? " busy" : "");
@@ -384,7 +579,7 @@
     const e = edgeById(state.selected.id);
     const from = nodeById(e.from);
     const to = nodeById(e.to);
-    const isActive = SCRIPT[state.step]?.activeEdge === e.id;
+    const isActive = currentActiveEdge() === e.id;
     el.panelTitle.textContent = `${from.title} → ${to.title}`;
     el.panelBadge.textContent = isActive ? "交接中" : "消息边";
     el.panelBadge.className = "badge" + (isActive ? " busy" : "");
@@ -403,7 +598,9 @@
   function applyStep(index) {
     state.step = index;
     if (index < 0) {
-      state.nodeStates = Object.fromEntries(NODES.map((n) => [n.id, "空闲"]));
+      state.nodeStates = idleNodeStates();
+      state.activeNodes = new Set();
+      state.activeEdge = null;
       showToast("");
       renderTimeline();
       applyHighlights();
@@ -413,8 +610,9 @@
 
     const step = SCRIPT[index];
     state.nodeStates = { ...step.states };
+    state.activeNodes = new Set(step.activeNodes);
+    state.activeEdge = step.activeEdge;
 
-    // remember messages for nodes/edges involved
     step.activeNodes.forEach((id) => {
       state.lastByNode[id] = step.message;
     });
@@ -429,8 +627,6 @@
 
     if (!state.selected && step.focus) {
       state.selected = { kind: "node", id: step.focus };
-    } else if (state.selected?.kind === "node" && step.focus) {
-      // keep selection but refresh panel
     }
 
     showToast(step.toast);
@@ -464,7 +660,7 @@
       el.panelBadge.className = "badge done";
       return;
     }
-    const delay = state.step === 3 ? 1600 : 1100; // slightly longer on "wait/work"
+    const delay = state.step === 3 ? 1600 : 1100;
     state.timer = setTimeout(() => {
       applyStep(state.step + 1);
       scheduleNext();
@@ -472,6 +668,7 @@
   }
 
   function play() {
+    if (state.mode !== "script") return;
     if (state.step >= SCRIPT.length - 1) return;
     state.playing = true;
     if (state.step < 0) applyStep(0);
@@ -486,19 +683,266 @@
   }
 
   function stepOnce() {
+    if (state.mode !== "script") return;
     if (state.playing) return;
     if (state.step >= SCRIPT.length - 1) return;
     applyStep(state.step + 1);
     syncButtons();
   }
 
-  function reset() {
+  function resetScript() {
     pause();
     state.selected = null;
     state.lastByNode = Object.fromEntries(NODES.map((n) => [n.id, "（尚未开始）"]));
     state.lastByEdge = Object.fromEntries(EDGES.map((e) => [e.id, "（尚未开始）"]));
     applyStep(-1);
     syncButtons();
+  }
+
+  /* —— Live mode —— */
+
+  const LIVE_STATUS_LABEL = {
+    idle: "未连接",
+    connecting: "连接中…",
+    live: "直播中",
+    demo: "演示直播中",
+    disconnected: "已断开",
+    error: "连接失败",
+  };
+
+  function setLiveStatus(status) {
+    state.liveStatus = status;
+    el.liveDot.dataset.status = status;
+    el.liveStatusText.textContent = LIVE_STATUS_LABEL[status] || status;
+    const isDemo = status === "demo";
+    el.liveBadge.hidden = !isDemo;
+    el.btnLiveDisconnect.disabled = !(status === "live" || status === "connecting");
+    el.btnLiveConnect.disabled = status === "live" || status === "connecting" || state.demoRunning;
+    el.btnLiveDemo.disabled = state.demoRunning || status === "live" || status === "connecting";
+    el.btnLiveStopDemo.disabled = !state.demoRunning;
+    if (state.mode === "live") updatePanel();
+  }
+
+  function normalizeEvent(raw) {
+    const ev = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return {
+      ts: ev.ts || new Date().toISOString(),
+      agent: ev.agent || "system",
+      type: ev.type || "message",
+      message: ev.message || "",
+      edge: ev.edge || null,
+      state: ev.state || null,
+      activeNodes: Array.isArray(ev.activeNodes) ? ev.activeNodes : null,
+    };
+  }
+
+  function ingestEvent(raw, opts = {}) {
+    let ev;
+    try {
+      ev = normalizeEvent(raw);
+    } catch {
+      return;
+    }
+    state.events.push(ev);
+
+    const agent = ev.agent;
+    if (agent && agent !== "system" && state.nodeStates[agent] !== undefined) {
+      if (ev.state) state.nodeStates[agent] = ev.state;
+      else if (ev.type === "status" || ev.type === "tool") state.nodeStates[agent] = "工作中";
+      else if (ev.type === "complete") state.nodeStates[agent] = "完成";
+      state.lastByNode[agent] = ev.message;
+    }
+
+    if (ev.activeNodes) {
+      state.activeNodes = new Set(ev.activeNodes);
+    } else if (agent && agent !== "system") {
+      state.activeNodes = new Set([agent]);
+    }
+
+    if (ev.edge && edgeById(ev.edge)) {
+      state.activeEdge = ev.edge;
+      state.lastByEdge[ev.edge] = ev.message;
+      const edge = edgeById(ev.edge);
+      state.lastByNode[edge.from] = ev.message;
+      state.lastByNode[edge.to] = ev.message;
+      if (!ev.activeNodes) {
+        state.activeNodes = new Set([edge.from, edge.to]);
+      }
+    } else if (ev.type === "status" || ev.type === "tool" || ev.type === "message") {
+      // keep previous edge highlight briefly unless cleared
+    }
+
+    if (ev.type === "complete") {
+      showToast(ev.message || "运行完成");
+    } else if (!opts.silentToast) {
+      showToast(`${AGENT_TITLE[agent] || agent} · ${ev.type}`);
+    }
+
+    if (agent && agent !== "system" && !state.selected) {
+      state.selected = { kind: "node", id: agent };
+    }
+
+    renderEventList();
+    applyHighlights();
+    updatePanel();
+  }
+
+  function clearLiveEvents() {
+    state.events = [];
+    state.activeNodes = new Set();
+    state.activeEdge = null;
+    state.nodeStates = idleNodeStates();
+    state.lastByNode = Object.fromEntries(NODES.map((n) => [n.id, "（尚未开始）"]));
+    state.lastByEdge = Object.fromEntries(EDGES.map((e) => [e.id, "（尚未开始）"]));
+    showToast("");
+    renderEventList();
+    applyHighlights();
+    updatePanel();
+  }
+
+  function stopDemoLive() {
+    if (state.demoTimer) {
+      clearTimeout(state.demoTimer);
+      state.demoTimer = null;
+    }
+    state.demoRunning = false;
+    if (state.liveStatus === "demo") setLiveStatus("idle");
+    else {
+      el.btnLiveDemo.disabled = state.liveStatus === "live" || state.liveStatus === "connecting";
+      el.btnLiveStopDemo.disabled = true;
+    }
+  }
+
+  function scheduleDemoTick() {
+    if (!state.demoRunning) return;
+    if (state.demoIndex >= DEMO_LIVE_EVENTS.length) {
+      state.demoRunning = false;
+      setLiveStatus("idle");
+      showToast("演示直播结束");
+      el.btnLiveStopDemo.disabled = true;
+      el.btnLiveDemo.disabled = false;
+      return;
+    }
+    const delay = state.demoIndex === 0 ? 200 : 900;
+    state.demoTimer = setTimeout(() => {
+      if (!state.demoRunning) return;
+      ingestEvent(DEMO_LIVE_EVENTS[state.demoIndex]);
+      state.demoIndex += 1;
+      scheduleDemoTick();
+    }, delay);
+  }
+
+  function startDemoLive() {
+    disconnectSSE(true);
+    clearLiveEvents();
+    state.demoIndex = 0;
+    state.demoRunning = true;
+    setLiveStatus("demo");
+    showToast("演示直播 · 浏览器内定时注入");
+    scheduleDemoTick();
+  }
+
+  function disconnectSSE(silent) {
+    if (state.es) {
+      try {
+        state.es.close();
+      } catch {
+        /* ignore */
+      }
+      state.es = null;
+    }
+    if (!silent && state.mode === "live" && !state.demoRunning) {
+      setLiveStatus("disconnected");
+    }
+  }
+
+  function connectSSE() {
+    stopDemoLive();
+    disconnectSSE(true);
+    const url = (el.sseUrl.value || "").trim();
+    if (!url) {
+      setLiveStatus("error");
+      showToast("请填写 SSE 地址");
+      return;
+    }
+    setLiveStatus("connecting");
+    showToast("正在连接 SSE…");
+    let opened = false;
+    try {
+      const es = new EventSource(url);
+      state.es = es;
+      es.onopen = () => {
+        opened = true;
+        setLiveStatus("live");
+        showToast("已连接 · 等待真实事件");
+      };
+      es.onmessage = (msg) => {
+        if (!msg.data || msg.data === ":keepalive") return;
+        try {
+          ingestEvent(JSON.parse(msg.data));
+        } catch {
+          ingestEvent({ agent: "system", type: "message", message: msg.data });
+        }
+      };
+      es.addEventListener("agent", (msg) => {
+        try {
+          ingestEvent(JSON.parse(msg.data));
+        } catch {
+          /* ignore bad payloads */
+        }
+      });
+      es.onerror = () => {
+        if (state.es === es) {
+          es.close();
+          state.es = null;
+          setLiveStatus(opened ? "disconnected" : "error");
+          showToast(opened ? "SSE 已断开" : "无法连接 SSE（可先跑 server/ 或改用演示直播）");
+        }
+      };
+    } catch (err) {
+      setLiveStatus("error");
+      showToast("SSE 初始化失败");
+    }
+  }
+
+  function setMode(mode) {
+    if (mode === state.mode) return;
+
+    // tear down outgoing mode
+    if (state.mode === "script") {
+      pause();
+    } else {
+      stopDemoLive();
+      disconnectSSE(true);
+    }
+
+    state.mode = mode;
+    document.body.classList.toggle("mode-live", mode === "live");
+    el.tabScript.classList.toggle("active", mode === "script");
+    el.tabLive.classList.toggle("active", mode === "live");
+    el.tabScript.setAttribute("aria-selected", mode === "script" ? "true" : "false");
+    el.tabLive.setAttribute("aria-selected", mode === "live" ? "true" : "false");
+    el.toolbarScript.hidden = mode !== "script";
+    el.toolbarLive.hidden = mode !== "live";
+    el.timelineWrap.hidden = mode !== "script";
+    el.eventStreamWrap.hidden = mode !== "live";
+
+    state.selected = null;
+    if (mode === "script") {
+      state.lastByNode = Object.fromEntries(NODES.map((n) => [n.id, "（尚未开始）"]));
+      state.lastByEdge = Object.fromEntries(EDGES.map((e) => [e.id, "（尚未开始）"]));
+      applyStep(state.step >= 0 ? state.step : -1);
+      syncButtons();
+    } else {
+      state.nodeStates = idleNodeStates();
+      state.activeNodes = new Set();
+      state.activeEdge = null;
+      showToast("直播模式：可用「演示直播」（Pages 可开）或连接本地 SSE");
+      setLiveStatus(state.es ? "live" : "idle");
+      renderEventList();
+      applyHighlights();
+      updatePanel();
+    }
   }
 
   function layout() {
@@ -509,19 +953,38 @@
   // init
   renderNodes();
   renderTimeline();
+  renderEventList();
   layout();
   applyStep(-1);
   syncButtons();
+  setLiveStatus("idle");
 
   el.btnPlay.addEventListener("click", play);
   el.btnPause.addEventListener("click", pause);
   el.btnStep.addEventListener("click", stepOnce);
-  el.btnReset.addEventListener("click", reset);
+  el.btnReset.addEventListener("click", resetScript);
+
+  el.tabScript.addEventListener("click", () => setMode("script"));
+  el.tabLive.addEventListener("click", () => setMode("live"));
+
+  el.btnLiveDemo.addEventListener("click", startDemoLive);
+  el.btnLiveStopDemo.addEventListener("click", () => {
+    stopDemoLive();
+    showToast("已停止演示直播");
+  });
+  el.btnLiveConnect.addEventListener("click", connectSSE);
+  el.btnLiveDisconnect.addEventListener("click", () => {
+    disconnectSSE(false);
+    showToast("已断开 SSE");
+  });
+  el.btnLiveClear.addEventListener("click", () => {
+    clearLiveEvents();
+    showToast("事件流已清空");
+  });
 
   window.addEventListener("resize", () => {
     layout();
   });
 
-  // redraw edges after fonts/layout settle
   requestAnimationFrame(() => layout());
 })();

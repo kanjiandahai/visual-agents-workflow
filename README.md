@@ -1,35 +1,31 @@
 # visual-agents-workflow
 
-可点击的多 Agent 工作流沙盘模拟页 —— 用来给用户演示「规划 → 派发 → 等待 → 审核 → 汇总」如何在画布上跑起来。
+可点击的多 Agent 工作流沙盘 —— **剧本模拟** + **近似实时直播**（浏览器演示直播 / 本地 SSE 接真执行）。
 
-> **Clickable multi-agent workflow sandbox** (static HTML). Demo a Planner / Executor / Reviewer loop with Play · Pause · Step · Reset.
+> **Clickable multi-agent workflow sandbox** (static HTML + optional SSE). Demo a Planner / Executor / Reviewer loop, or stream live run events.
 
 ## 在线演示
 
-若已开启 GitHub Pages：
-
 **https://kanjiandahai.github.io/visual-agents-workflow/**
 
-（源码在 `docs/`，Pages 指向该目录。）
+（源码在 `docs/`，Pages 指向该目录。GitHub Pages **没有后端**，线上请用「演示直播」。）
 
 ## 本地打开
 
-无需构建，直接打开静态页即可：
-
 ```bash
-# 克隆
 git clone https://github.com/kanjiandahai/visual-agents-workflow.git
 cd visual-agents-workflow
 
-# 任选其一
-open docs/index.html          # macOS
-xdg-open docs/index.html      # Linux
-# 或起一个本地静态服务
+# 仅静态页（剧本 + 演示直播）
 python3 -m http.server 8080 --directory docs
-# 浏览器访问 http://localhost:8080
+# http://localhost:8080
+
+# 或带 SSE 桥（静态页 + /events + /emit）
+node server/sse-server.js
+# http://127.0.0.1:8787
 ```
 
-## 沙盘演示什么
+## 沙盘能做什么
 
 | 角色 | 职责 |
 |------|------|
@@ -38,39 +34,143 @@ python3 -m http.server 8080 --directory docs
 | **执行者 (Executor)** | 执行子任务、回报结果 |
 | **审核者 (Reviewer)** | 检查质量、决定通过或打回 |
 
-页面能力：
+### 剧本模拟
 
-- **播放 / 暂停 / 单步 / 重置** —— 按剧本推进状态机
-- **节点与连线** —— 高亮当前 handoff；点击查看角色、状态、最近消息
-- **右侧详情面板** —— 角色说明与当前上下文
+- **播放 / 暂停 / 单步 / 重置** —— 按内置剧本推进
+- **节点与连线** —— 高亮当前 handoff；点击查看详情
 - **剧本时间轴** —— 规划 → 派发 → 等待 → 审核 → 汇总
 
-适合销售演示、培训讲解、产品原型，不连接真实 Agent 后端（假数据剧本）。
+### 直播模式
+
+切换顶栏 **「直播」**：
+
+| 能力 | 说明 |
+|------|------|
+| **演示直播** | 浏览器内定时注入事件，标为「演示直播」，**GitHub Pages 可直接用** |
+| **连接 SSE** | EventSource 订阅本地 `http://127.0.0.1:8787/events` |
+| **事件流面板** | 时间戳 · Agent · 类型 · 摘要；节点随事件点亮 |
+| **连接状态** | 未连接 / 连接中 / 直播中 / 演示直播 / 已断开 |
+
+## 近似实时直播
+
+### Pages 演示直播 vs 本地 SSE
+
+| 方式 | 需要后端？ | 适用 |
+|------|------------|------|
+| **演示直播** | 否 | 分享 Pages 链接给客户点开即看 |
+| **本地 SSE** | 是（`server/sse-server.js`） | 把真实 Agent / 例程步骤推到沙盘 |
+
+### 事件 schema
+
+每条事件为 JSON（SSE `data:` 或 `POST /emit` body）：
+
+```json
+{
+  "ts": "2026-11-02T07:00:01.000Z",
+  "agent": "planner",
+  "type": "dispatch",
+  "message": "派发起草子任务",
+  "edge": "e-planner-executor",
+  "state": "已派发，等待回报",
+  "activeNodes": ["planner", "executor"]
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `ts` | 否 | ISO 时间；缺省为接收时刻 |
+| `agent` | 建议 | `user` / `planner` / `executor` / `reviewer` / `system` |
+| `type` | 建议 | `status` / `dispatch` / `tool` / `message` / `handoff` / `complete` / `error` |
+| `message` | 建议 | 短摘要（事件流与节点「最近消息」） |
+| `edge` | 否 | 高亮连线：`e-user-planner` 等 |
+| `state` | 否 | 覆盖该 agent 节点状态文案 |
+| `activeNodes` | 否 | 同时点亮的节点 id 列表 |
+
+样例 NDJSON：[`docs/sample/demo-events.jsonl`](./docs/sample/demo-events.jsonl)
+
+### 启动本地 SSE
+
+```bash
+node server/sse-server.js
+# PORT=8787 HOST=127.0.0.1
+```
+
+- 沙盘：`http://127.0.0.1:8787/`
+- 流：`GET /events`（SSE，事件名 `agent`）
+- 推送：`POST /emit`
+- 健康检查：`GET /health`
+
+页面「直播」→ 确认 SSE 地址 → **连接 SSE**。
+
+### curl 推送示例
+
+```bash
+# 规划者派发
+curl -s -X POST http://127.0.0.1:8787/emit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent":"planner",
+    "type":"dispatch",
+    "message":"派发：撰写公告草稿",
+    "edge":"e-planner-executor",
+    "state":"已派发，等待回报",
+    "activeNodes":["planner","executor"]
+  }'
+
+# 执行者工具调用
+curl -s -X POST http://127.0.0.1:8787/emit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent":"executor",
+    "type":"tool",
+    "message":"tool: draft_outline ok",
+    "state":"撰写草稿…",
+    "activeNodes":["executor"]
+  }'
+
+# 结束
+curl -s -X POST http://127.0.0.1:8787/emit \
+  -H 'Content-Type: application/json' \
+  -d '{"agent":"system","type":"complete","message":"run complete"}'
+```
+
+### 真实 Agent / 例程怎么接
+
+在每一步（派发、工具调用、交还、完成）用 HTTP POST 同一 schema 即可，例如 shell：
+
+```bash
+emit() {
+  curl -s -X POST http://127.0.0.1:8787/emit \
+    -H 'Content-Type: application/json' \
+    -d "$1" >/dev/null
+}
+
+emit '{"agent":"planner","type":"status","message":"开始规划","state":"拆解步骤中","activeNodes":["planner"]}'
+# …真实工作…
+emit '{"agent":"planner","type":"dispatch","message":"已派发","edge":"e-planner-executor","activeNodes":["planner","executor"]}'
+```
+
+Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥（默认只绑 `127.0.0.1`；若暴露到公网请自行加鉴权，本仓库不提供密钥配置）。
 
 ## 开启 GitHub Pages
 
 1. 仓库 **Settings → Pages**
-2. Source 选 **Deploy from a branch**
-3. Branch 选 `main`，文件夹选 `/docs`
-4. Save 后等待一两分钟，访问 `https://kanjiandahai.github.io/visual-agents-workflow/`
-
-也可用 API（需仓库写权限）：
-
-```bash
-gh api -X PUT repos/kanjiandahai/visual-agents-workflow/pages \
-  -f build_type=legacy \
-  -f source[branch]=main \
-  -f source[path]=/docs
-```
+2. Source：**Deploy from a branch**
+3. Branch：`main`，文件夹：`/docs`
 
 ## 目录结构
 
 ```
 docs/
-  index.html   # 页面骨架
-  styles.css   # 样式
-  app.js       # 状态机、剧本、交互
-LICENSE        # MIT
+  index.html              # 页面骨架（剧本 / 直播）
+  styles.css
+  app.js                  # 状态机、剧本、演示直播、SSE 客户端
+  sample/demo-events.jsonl
+server/
+  sse-server.js           # 可选：SSE + /emit + 静态 docs
+  package.json
+  README.md
+LICENSE                   # MIT
 README.md
 .gitignore
 ```
