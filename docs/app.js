@@ -298,6 +298,9 @@
     demoTimer: null,
     demoIndex: 0,
     demoRunning: false,
+    currentTaskId: null,
+    filterCurrentTask: true,
+    runnerHint: "",
   };
 
   const el = {
@@ -333,6 +336,11 @@
     btnLiveDisconnect: document.getElementById("btn-live-disconnect"),
     btnLiveClear: document.getElementById("btn-live-clear"),
     sseUrl: document.getElementById("sse-url"),
+    taskPrompt: document.getElementById("task-prompt"),
+    btnTaskSubmit: document.getElementById("btn-task-submit"),
+    taskIdDisplay: document.getElementById("task-id-display"),
+    taskFilter: document.getElementById("task-filter"),
+    runnerHint: document.getElementById("runner-hint"),
   };
 
   function nodeById(id) {
@@ -368,22 +376,43 @@
     }
   }
 
+  function visibleEvents() {
+    if (!state.filterCurrentTask || !state.currentTaskId) return state.events;
+    return state.events.filter(
+      (ev) => !ev.task_id || ev.task_id === state.currentTaskId || ev.type === "status" && !ev.task_id
+    );
+  }
+
   function renderEventList() {
     el.eventList.innerHTML = "";
-    const slice = state.events.slice(-80).reverse();
+    const all = visibleEvents();
+    const slice = all.slice(-80).reverse();
     slice.forEach((ev, idx) => {
       const li = document.createElement("li");
       if (idx === 0) li.classList.add("fresh");
       const agent = ev.agent || "system";
+      const tid = ev.task_id
+        ? escapeHtml(String(ev.task_id).replace(/^task_/, "…"))
+        : "";
+      const metaBits = [];
+      if (ev.step != null) metaBits.push("#" + ev.step);
+      if (ev.tool) metaBits.push(ev.tool);
+      if (ev.status) metaBits.push(ev.status);
+      const meta = metaBits.length ? metaBits.join(" · ") : (ev.type || "event");
       li.innerHTML = `
         <span class="ts">${formatClock(ev.ts)}</span>
         <span class="agent" data-agent="${agent}">${AGENT_TITLE[agent] || agent}</span>
-        <span class="etype">${ev.type || "event"}</span>
+        <span class="etype">${escapeHtml(meta)}</span>
+        <span class="task" title="${escapeHtml(ev.task_id || "")}">${tid || "—"}</span>
         <span class="payload">${escapeHtml(ev.message || "")}</span>
       `;
       el.eventList.appendChild(li);
     });
-    el.eventCount.textContent = `${state.events.length} 条`;
+    const suffix =
+      state.filterCurrentTask && state.currentTaskId
+        ? `（过滤 ${state.currentTaskId}）`
+        : "";
+    el.eventCount.textContent = `${all.length}/${state.events.length} 条${suffix}`;
   }
 
   function escapeHtml(s) {
@@ -725,7 +754,7 @@
 
   function normalizeEvent(raw) {
     const ev = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return {
+    const out = {
       ts: ev.ts || new Date().toISOString(),
       agent: ev.agent || "system",
       type: ev.type || "message",
@@ -734,6 +763,12 @@
       state: ev.state || null,
       activeNodes: Array.isArray(ev.activeNodes) ? ev.activeNodes : null,
     };
+    if (ev.task_id != null) out.task_id = String(ev.task_id);
+    if (ev.step != null && Number.isFinite(Number(ev.step))) out.step = Number(ev.step);
+    if (ev.tool != null) out.tool = String(ev.tool);
+    if (ev.status != null) out.status = String(ev.status);
+    if (ev.detail != null && typeof ev.detail === "object") out.detail = ev.detail;
+    return out;
   }
 
   function ingestEvent(raw, opts = {}) {
@@ -744,6 +779,10 @@
       return;
     }
     state.events.push(ev);
+    if (ev.task_id && (ev.type === "task_start" || !state.currentTaskId)) {
+      state.currentTaskId = ev.task_id;
+      if (el.taskIdDisplay) el.taskIdDisplay.textContent = ev.task_id;
+    }
 
     const agent = ev.agent;
     if (agent && agent !== "system" && state.nodeStates[agent] !== undefined) {
@@ -905,6 +944,71 @@
     }
   }
 
+
+  function apiBaseFromSse() {
+    const url = (el.sseUrl.value || "").trim() || "http://127.0.0.1:8787/events";
+    try {
+      const u = new URL(url);
+      let path = u.pathname || "";
+      if (path.endsWith("/events")) path = path.slice(0, -"/events".length) || "";
+      return `${u.origin}${path}`;
+    } catch {
+      return "http://127.0.0.1:8787";
+    }
+  }
+
+  async function refreshRunnerHint() {
+    if (!el.runnerHint) return;
+    try {
+      const res = await fetch(`${apiBaseFromSse()}/runner`);
+      const data = await res.json();
+      if (!data.ok) {
+        el.runnerHint.textContent = data.error || "runner 不可用";
+        return;
+      }
+      state.runnerHint = data.runner_kind;
+      el.runnerHint.textContent = data.dsh_on_path
+        ? `runner: dsh (${data.profile})`
+        : `runner: fake-dsh（未检测到 dsh）`;
+      el.runnerHint.title = data.hint || data.runner || "";
+    } catch {
+      el.runnerHint.textContent = "无法读取 /runner（先启动 node server/sse-server.js）";
+    }
+  }
+
+  async function submitRealTask() {
+    const prompt = (el.taskPrompt && el.taskPrompt.value || "").trim();
+    if (!prompt) {
+      showToast("请填写真实任务内容");
+      return;
+    }
+    stopDemoLive();
+    if (state.liveStatus !== "live" && state.liveStatus !== "connecting") {
+      connectSSE();
+    }
+    el.btnTaskSubmit.disabled = true;
+    showToast("正在提交任务…");
+    try {
+      const res = await fetch(`${apiBaseFromSse()}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      state.currentTaskId = data.task_id;
+      if (el.taskIdDisplay) el.taskIdDisplay.textContent = data.task_id;
+      showToast(`已受理 ${data.task_id} · ${data.runner_kind}`);
+      refreshRunnerHint();
+    } catch (err) {
+      showToast(`提交失败：${err.message || err}`);
+    } finally {
+      el.btnTaskSubmit.disabled = false;
+    }
+  }
+
   function setMode(mode) {
     if (mode === state.mode) return;
 
@@ -937,11 +1041,12 @@
       state.nodeStates = idleNodeStates();
       state.activeNodes = new Set();
       state.activeEdge = null;
-      showToast("直播模式：可用「演示直播」（Pages 可开）或连接本地 SSE");
+      showToast("直播模式：演示直播 / SSE / 本机 dsh 提交真实任务");
       setLiveStatus(state.es ? "live" : "idle");
       renderEventList();
       applyHighlights();
       updatePanel();
+      refreshRunnerHint();
     }
   }
 
@@ -980,6 +1085,27 @@
   el.btnLiveClear.addEventListener("click", () => {
     clearLiveEvents();
     showToast("事件流已清空");
+  });
+
+  if (el.btnTaskSubmit) {
+    el.btnTaskSubmit.addEventListener("click", submitRealTask);
+  }
+  if (el.taskPrompt) {
+    el.taskPrompt.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        submitRealTask();
+      }
+    });
+  }
+  if (el.taskFilter) {
+    el.taskFilter.addEventListener("change", () => {
+      state.filterCurrentTask = !!el.taskFilter.checked;
+      renderEventList();
+    });
+  }
+  el.tabLive.addEventListener("click", () => {
+    refreshRunnerHint();
   });
 
   window.addEventListener("resize", () => {

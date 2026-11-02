@@ -1,7 +1,7 @@
 # 真实用户任务对接方案
 
 > 目标：用户提交并跑起**真实任务** → Agent / 多 Agent 实际执行 → 沙盘「直播」模式近似实时展示过程。  
-> 本文是对接蓝图；当前仓库已有 **剧本模拟** 与 **演示直播 / 本地 SSE**，尚未内置「任务提交 API」或托管执行器。
+> **第一期（本机 dsh）已落地**：本地 Task API `POST /tasks` + `dsh` / `fake-dsh` runner + 事件透传；托管多租户仍属后续阶段。
 
 中文为主；English terms kept where they match code (`/emit`, SSE, `task_id`).
 
@@ -52,7 +52,7 @@
 |------|------|------------------|
 | `docs/` 沙盘 | 剧本 + 演示直播 + SSE 客户端 | 展示 Live 事件；可选将来加「提交任务」表单（调 Task API） |
 | `server/sse-server.js` | 本地 `/events` + `/emit`，默认绑 `127.0.0.1` | 开发期事件总线；公网需鉴权 / CORS 收紧 |
-| Task API / Runner | **不在本仓** | 接用户输入、调度 Agent、调工具、按 schema emit |
+| Task API / Runner | **第一期已在本仓**：`POST /tasks` → 本机 `dsh` | 接用户输入、调度 Agent、调工具、按 schema emit |
 | GitHub Pages | 仅静态 | **不能**跑真实任务后端；线上真直播需自建/托管 SSE |
 
 ---
@@ -232,13 +232,74 @@ done < docs/sample/real-task-readme-summarize.jsonl
 
 ---
 
-## 8. 下一步（实现清单，非本文范围）
+## 8. 第一期：本机 dsh（已实现）
 
-1. Server：`normalizeEvent` 透传 `task_id` / `step` / `tool` / `status` / `detail`。
-2. 前端：事件行展示上述字段；可选 `task_id` 过滤。
-3. Emit 鉴权：`EMIT_TOKEN` + CORS 白名单。
-4. 可选 `POST /tasks` 最小 stub（接收目标文案，返回 `task_id`，由外部 worker 拉任务）——仍建议 worker 住在宿主侧。
-5. 将 Grok Bot / 例程的一步一 emit 写成可复制片段，链回本文。
+把 **DeepSeek Harness CLI `dsh`** 当作本机真实任务执行器；没有安装时自动回退到仓库内的 [`scripts/fake-dsh.sh`](../scripts/fake-dsh.sh)（演示用，不调模型）。
+
+### 8.1 端到端步骤
+
+```bash
+git clone https://github.com/kanjiandahai/visual-agents-workflow.git
+cd visual-agents-workflow
+
+# 终端 1 — SSE + Task API + 静态沙盘
+node server/sse-server.js
+# 启动日志会打印 runner: dsh 或 fake-dsh
+
+# 浏览器
+# 打开 http://127.0.0.1:8787/
+# 顶栏「直播」→「连接 SSE」→ 在「真实任务（本机 dsh）」框输入需求 →「提交任务」
+```
+
+或纯 curl（浏览器已连接 SSE 时更直观）：
+
+```bash
+# 看将用哪个 runner
+curl -s http://127.0.0.1:8787/runner | python3 -m json.tool
+
+# 提交真实任务
+curl -s -X POST http://127.0.0.1:8787/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"用三句话总结本仓库 README，并提到沙盘与 SSE"}' | python3 -m json.tool
+
+# 查询
+curl -s http://127.0.0.1:8787/tasks | python3 -m json.tool
+```
+
+验收：
+
+1. 返回 `task_id` 与 `runner_kind`（`dsh` 或 `fake-dsh`）。
+2. 直播事件流出现带同一 `task_id` 的 `task_start` → planner → executor（stdout 行）→ reviewer → `complete`/`error`。
+3. 节点与连线随 `activeNodes` / `edge` 变化；可勾选「只看当前 task」。
+
+### 8.2 dsh 安装与回退
+
+| 情况 | 行为 |
+|------|------|
+| `command -v dsh` 成功，或设置了 `DSH_BIN` | 执行：`dsh --profile "${DSH_PROFILE:-headless}" "<prompt>"` |
+| 否则 | 执行：`scripts/fake-dsh.sh --profile headless "<prompt>"`，事件里 `runner_kind: fake-dsh` |
+
+安装真实 dsh（DeepSeek Harness）请按其官方文档（npm / 发行包）。装好后**重启** `node server/sse-server.js`，`GET /runner` 应显示 `dsh_on_path: true`。
+
+可选环境变量：
+
+| 变量 | 含义 |
+|------|------|
+| `DSH_BIN` | 强制指定 dsh 可执行文件路径 |
+| `DSH_PROFILE` | 默认 `headless`（一次性跑完退出） |
+| `PORT` / `HOST` | 服务监听（默认 `127.0.0.1:8787`） |
+
+### 8.3 本仓已实现 vs 仍待做
+
+| 项 | 状态 |
+|----|------|
+| `normalizeEvent` 透传 `task_id` / `step` / `tool` / `status` / `detail` | ✅ |
+| 前端事件行展示 + 当前 `task_id` 过滤 | ✅ |
+| `POST /tasks` + dsh / fake-dsh runner | ✅ |
+| 沙盘页内提交任务表单 | ✅ |
+| Emit 鉴权 / 公网 CORS 白名单 | ❌ 仍仅适合本机 |
+| Grok Bot / 例程一步一 emit | ❌ 见 Phase B |
+| 托管 Runner + 多租户 | ❌ 见 Phase C |
 
 ---
 
@@ -246,4 +307,5 @@ done < docs/sample/real-task-readme-summarize.jsonl
 
 - 沙盘与 SSE 用法：[仓库 README](../README.md)
 - 演示事件：[`sample/demo-events.jsonl`](./sample/demo-events.jsonl)
-- 本机桥：[`server/sse-server.js`](../server/sse-server.js)
+- 本机桥 + Task API：[`server/sse-server.js`](../server/sse-server.js)、[`server/task-runner.js`](../server/task-runner.js)
+- 无 dsh 时的演示 CLI：[`scripts/fake-dsh.sh`](../scripts/fake-dsh.sh)

@@ -49,6 +49,22 @@
         SSE 地址
         <input type="url" id="sse-url" class="sse-url" value="http://127.0.0.1:8787/events" spellcheck="false" />
       </label>
+      <div class="task-form" id="task-form">
+        <label class="task-prompt-label">
+          真实任务（本机 dsh）
+          <input type="text" id="task-prompt" class="task-prompt" maxlength="2000"
+            placeholder="例如：用三句话总结本仓库 README" spellcheck="true" />
+        </label>
+        <button type="button" id="btn-task-submit" class="btn primary" title="POST /tasks → dsh">🚀 提交任务</button>
+        <div class="task-meta" aria-live="polite">
+          <span>task_id</span>
+          <code id="task-id-display">—</code>
+          <span class="task-filter-wrap">
+            <label><input type="checkbox" id="task-filter" checked /> 只看当前 task</label>
+          </span>
+          <span id="runner-hint" class="runner-hint"></span>
+        </div>
+      </div>
     </div>
 
     <main class="main">
@@ -102,7 +118,7 @@
     </main>
 
     <footer class="footer">
-      <span>visual-agents-workflow · MIT · 剧本 / 演示直播 / 可选本地 SSE</span>
+      <span>visual-agents-workflow · MIT · 剧本 / 演示直播 / 本机 dsh Task API</span>
       <a href="https://github.com/kanjiandahai/visual-agents-workflow" target="_blank" rel="noopener">GitHub</a>
     </footer>
   </div>

@@ -1,8 +1,8 @@
 # visual-agents-workflow
 
-可点击的多 Agent 工作流沙盘 —— **剧本模拟** + **近似实时直播**（浏览器演示直播 / 本地 SSE 接真执行）。
+可点击的多 Agent 工作流沙盘 —— **剧本模拟** + **近似实时直播** + **第一期本机 dsh 真实任务**。
 
-> **Clickable multi-agent workflow sandbox** (static HTML + optional SSE). Demo a Planner / Executor / Reviewer loop, or stream live run events.
+> **Clickable multi-agent workflow sandbox** (static HTML + local SSE / Task API). Demo a Planner / Executor / Reviewer loop, stream live events, or run a real prompt via local `dsh`.
 
 ## 在线演示
 
@@ -24,6 +24,25 @@ python3 -m http.server 8080 --directory docs
 node server/sse-server.js
 # http://127.0.0.1:8787
 ```
+
+## 第一期：本机 dsh 真实任务
+
+在本机用 **DeepSeek Harness CLI（`dsh`）** 跑用户真实需求，过程推到沙盘「直播」模式。未安装 `dsh` 时自动用 [`scripts/fake-dsh.sh`](./scripts/fake-dsh.sh) 演示（仍发完整事件序列）。
+
+```bash
+node server/sse-server.js
+# 浏览器打开 http://127.0.0.1:8787/ → 直播 → 连接 SSE → 填写任务 → 提交任务
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"用三句话总结本仓库 README"}'
+```
+
+- 详细步骤与验收：[`docs/REAL_TASKS.md`](./docs/REAL_TASKS.md)「§8 第一期：本机 dsh」
+- `GET /runner` 可确认当前是 `dsh` 还是 `fake-dsh`
+- 环境变量：`DSH_BIN`、`DSH_PROFILE`（默认 `headless`）
 
 ## 沙盘能做什么
 
@@ -48,7 +67,8 @@ node server/sse-server.js
 |------|------|
 | **演示直播** | 浏览器内定时注入事件，标为「演示直播」，**GitHub Pages 可直接用** |
 | **连接 SSE** | EventSource 订阅本地 `http://127.0.0.1:8787/events` |
-| **事件流面板** | 时间戳 · Agent · 类型 · 摘要；节点随事件点亮 |
+| **提交真实任务** | 页内表单或 `POST /tasks` → 本机 `dsh` / `fake-dsh`，带 `task_id` |
+| **事件流面板** | 时间戳 · Agent · step/tool/status · task · 摘要；可按 task 过滤 |
 | **连接状态** | 未连接 / 连接中 / 直播中 / 演示直播 / 已断开 |
 
 ## 近似实时直播
@@ -85,6 +105,7 @@ node server/sse-server.js
 | `edge` | 否 | 高亮连线：`e-user-planner` 等 |
 | `state` | 否 | 覆盖该 agent 节点状态文案 |
 | `activeNodes` | 否 | 同时点亮的节点 id 列表 |
+| `task_id` / `step` / `tool` / `status` | 真实任务建议 | 第一期已透传并在事件流展示 |
 
 样例 NDJSON：[`docs/sample/demo-events.jsonl`](./docs/sample/demo-events.jsonl)
 
@@ -98,6 +119,7 @@ node server/sse-server.js
 - 沙盘：`http://127.0.0.1:8787/`
 - 流：`GET /events`（SSE，事件名 `agent`）
 - 推送：`POST /emit`
+- **任务**：`POST /tasks`、`GET /tasks`、`GET /tasks/:id`、`GET /runner`
 - 健康检查：`GET /health`
 
 页面「直播」→ 确认 SSE 地址 → **连接 SSE**。
@@ -156,7 +178,7 @@ Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥�
 
 演示直播 ≠ 真实任务。若要把**用户真实任务**的执行过程推到沙盘，请读：
 
-**[docs/REAL_TASKS.md](./docs/REAL_TASKS.md)** —— 目标、架构（Task API → SSE → Live）、真实运行事件 schema（`task_id` / `step` / `tool` / `status`）、安全、分阶段计划（curl → Bot/例程 → 托管 runner）、本仓与执行器职责划分，以及样例「总结这个 README」事件序列。
+**[docs/REAL_TASKS.md](./docs/REAL_TASKS.md)** —— 架构、事件 schema、安全、分阶段计划；**§8 第一期：本机 dsh** 含安装/回退与端到端命令。
 
 样例 NDJSON：[`docs/sample/real-task-readme-summarize.jsonl`](./docs/sample/real-task-readme-summarize.jsonl)
 
@@ -170,14 +192,18 @@ Python 同上：`urllib.request` / `httpx` POST JSON 到 `/emit`。无需密钥�
 
 ```
 docs/
-  index.html              # 页面骨架（剧本 / 直播）
+  index.html              # 页面骨架（剧本 / 直播 / 提交任务）
   styles.css
-  app.js                  # 状态机、剧本、演示直播、SSE 客户端
-  sample/demo-events.jsonl
+  app.js                  # 状态机、剧本、演示直播、SSE、Task 表单
+  REAL_TASKS.md           # 真实任务对接（含第一期 dsh）
+  sample/
 server/
-  sse-server.js           # 可选：SSE + /emit + 静态 docs
+  sse-server.js           # SSE + /emit + /tasks + 静态 docs
+  task-runner.js          # dsh / fake-dsh 执行与事件编排
   package.json
   README.md
+scripts/
+  fake-dsh.sh             # 无 dsh 时的演示 CLI
 LICENSE                   # MIT
 README.md
 .gitignore

@@ -769,3 +769,102 @@ body.mode-live .node.active {
       var(--shadow);
   }
 }
+
+
+/* —— Phase-1 real task form —— */
+.task-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  width: 100%;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.task-prompt-label {
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.task-prompt {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0d1424;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.task-prompt:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.2);
+}
+
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  width: 100%;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.task-meta code {
+  font-family: var(--mono);
+  color: var(--accent-2);
+  background: #0d1424;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-filter-wrap label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.runner-hint {
+  color: var(--warn);
+}
+
+.event-list li {
+  grid-template-columns: 64px 56px 52px 44px minmax(0, 1fr);
+}
+
+.event-list .task {
+  color: var(--accent-2);
+  font-size: 0.65rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-list .meta-pill {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+@media (max-width: 720px) {
+  .event-list li {
+    grid-template-columns: 1fr 1fr;
+  }
+  .event-list .task,
+  .event-list .payload {
+    grid-column: 1 / -1;
+  }
+}
