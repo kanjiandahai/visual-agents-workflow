@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>多 Agent 工作流沙盘 · visual-agents-workflow</title>
+  <meta name="description" content="基于 dsh subagent 的多 Agent 沙盘：用户 → 根 Agent → 子 Agent → 工具 → 回根 → 用户。剧本模拟 + 演示直播 + 本机 dsh。不替代默认单 Agent 演示。" />
+  <link rel="canonical" href="https://kanjiandahai.github.io/visual-agents-workflow/multi-agent.html" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="多 Agent 工作流沙盘 · visual-agents-workflow" />
+  <meta property="og:description" content="对齐 dsh 父 Agent → 子 Agent 委派（subagent / subagent_fork）：用户 → 根 Agent → 子 Agent → 工具 → 回根 → 用户。" />
+  <meta property="og:url" content="https://kanjiandahai.github.io/visual-agents-workflow/multi-agent.html" />
+  <meta property="og:image" content="https://kanjiandahai.github.io/visual-agents-workflow/og.svg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="多 Agent 工作流沙盘 · visual-agents-workflow" />
+  <meta name="twitter:description" content="dsh subagent / subagent_fork demo: User → root Agent → child Agents → Tools → root → User." />
+  <meta name="twitter:image" content="https://kanjiandahai.github.io/visual-agents-workflow/og.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="multi-agent">
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>多 Agent 工作流沙盘</h1>
+          <p class="subtitle">对齐 dsh subagent · 用户 / 根 Agent / 子 Agent / 工具 · 剧本与直播</p>
+        </div>
+      </div>
+      <div class="mode-tabs" role="tablist" aria-label="运行模式">
+        <button type="button" class="mode-tab active" role="tab" id="tab-script" aria-selected="true" data-mode="script">剧本模拟</button>
+        <button type="button" class="mode-tab" role="tab" id="tab-live" aria-selected="false" data-mode="live">直播</button>
+      </div>
+      <a class="sibling-demo" href="./">单 Agent 沙盘</a>
+    </header>
+
+    <div class="toolbar" id="toolbar-script">
+      <div class="controls" role="group" aria-label="剧本播放控制">
+        <button type="button" id="btn-play" class="btn primary" title="播放">▶ 播放</button>
+        <button type="button" id="btn-pause" class="btn" title="暂停" disabled>⏸ 暂停</button>
+        <button type="button" id="btn-step" class="btn" title="单步">⏭ 单步</button>
+        <button type="button" id="btn-reset" class="btn ghost" title="重置">↺ 重置</button>
+      </div>
+    </div>
+
+    <div class="toolbar" id="toolbar-live" hidden>
+      <div class="live-status-wrap" aria-live="polite">
+        <span class="live-dot" id="live-dot" data-status="idle"></span>
+        <span class="live-status-text" id="live-status-text">未连接</span>
+        <span class="live-badge" id="live-badge" hidden>演示直播</span>
+      </div>
+      <div class="controls" role="group" aria-label="直播控制">
+        <button type="button" id="btn-live-demo" class="btn primary" title="浏览器内定时注入多 Agent 事件">▶ 开始演示直播</button>
+        <button type="button" id="btn-live-stop-demo" class="btn" title="停止演示" disabled>⏹ 停止演示</button>
+        <button type="button" id="btn-live-connect" class="btn" title="连接本地 SSE">🔌 连接 SSE</button>
+        <button type="button" id="btn-live-disconnect" class="btn" title="断开" disabled>断开</button>
+        <button type="button" id="btn-live-clear" class="btn ghost" title="清空事件流">清空</button>
+      </div>
+      <label class="sse-url-label">
+        SSE 地址
+        <input type="url" id="sse-url" class="sse-url" value="http://127.0.0.1:8787/events" spellcheck="false" />
+      </label>
+      <div class="task-form" id="task-form">
+        <label class="task-prompt-label">
+          真实任务（本机 dsh · 多 Agent）
+          <input type="text" id="task-prompt" class="task-prompt" maxlength="2000"
+            placeholder="例如：分别调研沙盘可视化与本机 dsh/SSE，用子 Agent 并行后再汇总" spellcheck="true"
+            value="请分别调研本仓库的「沙盘可视化」和「本机 dsh / SSE」，用 subagent / subagent_fork 并行委派后再汇总成中文要点。" />
+        </label>
+        <button type="button" id="btn-task-submit" class="btn primary" title="POST /tasks { mode: multi } → dsh">🚀 提交任务</button>
+        <div class="task-meta" aria-live="polite">
+          <span>task_id</span>
+          <code id="task-id-display">—</code>
+          <span class="task-filter-wrap">
+            <label><input type="checkbox" id="task-filter" checked /> 只看当前 task</label>
+          </span>
+          <span id="runner-hint" class="runner-hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <main class="main">
+      <section class="stage-wrap" aria-label="工作流画布">
+        <div class="stage" id="stage">
+          <svg class="edges" id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="nodes" id="nodes"></div>
+          <div class="toast" id="toast" hidden></div>
+        </div>
+        <div class="timeline" id="timeline-wrap" aria-label="剧本时间轴">
+          <div class="timeline-label">剧本进度</div>
+          <ol class="timeline-steps" id="timeline"></ol>
+        </div>
+        <div class="event-stream" id="event-stream-wrap" hidden aria-label="事件流">
+          <div class="event-stream-head">
+            <div class="timeline-label">事件流 <span class="hint">近似实时</span></div>
+            <span class="event-count" id="event-count">0 条</span>
+          </div>
+          <ol class="event-list" id="event-list"></ol>
+        </div>
+      </section>
+
+      <aside class="panel" id="panel" aria-live="polite">
+        <div class="panel-head">
+          <h2 id="panel-title">选择一个节点或连线</h2>
+          <span class="badge" id="panel-badge">空闲</span>
+        </div>
+        <dl class="panel-meta">
+          <div>
+            <dt>类型</dt>
+            <dd id="panel-type">—</dd>
+          </div>
+          <div>
+            <dt>当前状态</dt>
+            <dd id="panel-state">—</dd>
+          </div>
+        </dl>
+        <div class="panel-block">
+          <h3>职责 / 说明</h3>
+          <p id="panel-desc">点击画布上的节点或消息边，查看职责与最近一次交接内容（用户 / 根 Agent / 子 Agent / 工具）。</p>
+        </div>
+        <div class="panel-block">
+          <h3>最近消息</h3>
+          <pre id="panel-message" class="message">（尚未开始）</pre>
+        </div>
+        <div class="panel-block">
+          <h3>场景简介</h3>
+          <p id="scenario-blurb">示例任务：根 Agent 用 <code>subagent</code> / <code>subagent_fork</code> 并行委派两个子 Agent（调研可视化 / 调研 dsh·SSE），子 Agent 调工具后回报，根 Agent 再汇总交付。这是 dsh 真实的父→子委派，不是规划者/执行者/审核者。直播里的 <code>dsh --json</code> 主要是根会话投影：能看到委派工具的调用与「started subagent …」，子 Agent 内部工具细节通常不可见。</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>visual-agents-workflow · MIT · 多 Agent 演示（保留默认单 Agent 沙盘）</span>
+      <a class="sibling-demo-footer" href="./">返回单 Agent</a>
+      <a href="https://github.com/kanjiandahai/visual-agents-workflow" target="_blank" rel="noopener">GitHub</a>
+    </footer>
+  </div>
+  <script src="./multi-agent.js"></script>
+</body>
+</html>

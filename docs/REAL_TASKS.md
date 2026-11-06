@@ -323,3 +323,4 @@ curl -s http://127.0.0.1:8787/tasks | python3 -m json.tool
 - 演示事件：[`sample/demo-events.jsonl`](./sample/demo-events.jsonl)
 - 本机桥 + Task API：[`server/sse-server.js`](../server/sse-server.js)、[`server/task-runner.js`](../server/task-runner.js)
 - 无 dsh 时的演示 CLI：[`scripts/fake-dsh.sh`](../scripts/fake-dsh.sh)
+- 可选的多 Agent 演示（不改变上文单 Agent 约定）：[MULTI_AGENT.md](./MULTI_AGENT.md)、[`multi-agent.html`](./multi-agent.html)

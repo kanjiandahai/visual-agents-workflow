@@ -15,6 +15,12 @@
 
 源码在 `docs/`，GitHub Pages 指向该目录。线上**没有后端**，请用「演示直播」；本机 `dsh` / SSE 需本地启动服务。
 
+另有一页基于 dsh **父 → 子委派** 的多 Agent 演示（不改变本页默认单 Agent 沙盘）：
+
+**https://kanjiandahai.github.io/visual-agents-workflow/multi-agent.html**
+
+说明见 [docs/MULTI_AGENT.md](./docs/MULTI_AGENT.md)。
+
 ## 你会看到什么
 
 画布对齐 **dsh headless 单 Agent**（不是多角色编排）：
@@ -96,12 +102,13 @@ curl -s -X POST http://127.0.0.1:8787/tasks \
 
 ```
 docs/                 # 沙盘前端（Pages 根目录）
-  index.html · app.js · styles.css
-  REAL_TASKS.md       # 真实任务对接说明
-  sample/             # 样例事件
+  index.html · app.js · styles.css   # 默认单 Agent 沙盘
+  multi-agent.html · multi-agent.js  # 额外的多 Agent 演示
+  REAL_TASKS.md · MULTI_AGENT.md
+  sample/             # 样例事件（含 multi-agent-*.jsonl）
 server/
   sse-server.js       # SSE + /emit + /tasks + 静态 docs
-  task-runner.js      # dsh / fake-dsh → 单 Agent 事件
+  task-runner.js      # dsh / fake-dsh → 事件（默认单 Agent；mode=multi 映射子 Agent）
 scripts/
   fake-dsh.sh         # 无 dsh 时的演示 CLI
 ```

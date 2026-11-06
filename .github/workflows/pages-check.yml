@@ -27,6 +27,10 @@ jobs:
             docs/robots.txt \
             docs/sitemap.xml \
             docs/og.svg \
+            docs/multi-agent.html \
+            docs/multi-agent.js \
+            docs/MULTI_AGENT.md \
+            docs/sample/multi-agent-demo.jsonl \
             server/sse-server.js
           do
             test -f "$f" || { echo "missing: $f"; exit 1; }
@@ -64,4 +68,9 @@ jobs:
           grep -F 'visual-agents-workflow' docs/llms.txt >/dev/null
           # og image path referenced by Pages absolute URL
           grep -F 'og.svg' docs/index.html >/dev/null
+          grep -F 'src="./multi-agent.js"' docs/multi-agent.html >/dev/null
+          grep -F 'multi-agent.html' docs/sitemap.xml >/dev/null
+          grep -F 'id: "user"' docs/app.js >/dev/null
+          grep -F 'id: "agent"' docs/app.js >/dev/null
+          grep -F 'id: "tools"' docs/app.js >/dev/null
           echo "link-sanity ok"

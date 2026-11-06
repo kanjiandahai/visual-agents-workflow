@@ -4,6 +4,8 @@
  * Phase-1 local runner: spawn `dsh` (DeepSeek Harness) when on PATH,
  * otherwise scripts/fake-dsh.sh. Emits REAL_TASKS schema events for a
  * **single Agent** topology: user ↔ agent ↔ tools (no planner/reviewer).
+ * Opt-in `mode: "multi"` maps dsh `subagent` / `subagent_fork` onto dynamic
+ * child nodes without changing the default single-agent path.
  */
 
 const { spawn, spawnSync } = require("child_process");
@@ -340,10 +342,237 @@ function mapJsonEvent(obj) {
   return null;
 }
 
+const DELEGATE_TOOLS = new Set(["subagent", "subagent_fork"]);
+function wrapMultiPrompt(userPrompt) {
+  return [
+    "请把下面的用户任务拆成两个相互独立的子任务，并在同一轮用工具 `subagent` 或 `subagent_fork` 分别委派给两个子 Agent（例如调研 A / 调研 B）。",
+    "等待子 Agent 回报或完成通知之后，由你汇总成对用户的最终答复。不要由你自己单独做完两份调研。",
+    "",
+    "用户任务：",
+    userPrompt,
+  ].join("\n");
+}
+
+function childNodeIdFromRaw(raw) {
+  const cleaned = String(raw || "")
+    .replace(/^session-/, "")
+    .replace(/[^A-Za-z0-9_-]/g, "");
+  const short = (cleaned || "anon").slice(0, 12);
+  return { nodeId: `child-${short}`, short };
+}
+
+function parseStartedSubagent(resultText) {
+  const m = String(resultText || "").match(/started subagent\s+(\S+)/i);
+  return m ? m[1].replace(/[.,;:]+$/, "") : null;
+}
+
+function parseBackgroundFinished(text) {
+  const m = String(text || "").match(/Background subagent\s+(\S+)\s+finished/i);
+  return m ? m[1].replace(/[.,;:]+$/, "") : null;
+}
+
+function extractDelegateInput(input) {
+  if (!input || typeof input !== "object") return { label: "", task: "" };
+  const task = input.task || input.prompt || input.message || input.goal || "";
+  const label = input.label || input.name || input.title || "";
+  return {
+    label: String(label || ""),
+    task: typeof task === "string" ? task : JSON.stringify(task),
+  };
+}
+
+/**
+ * Root-session projection mapper for multi-agent mode.
+ * Tracks callId → tool so `tool_result` (which has no tool name) can spawn
+ * or update child nodes from `subagent` / `subagent_fork` / `send_message`.
+ */
+function createMultiMapper() {
+  const callMap = new Map();
+  const childByRaw = new Map();
+  let pendingSerial = 0;
+
+  function rememberChild(rawId, nodeId) {
+    if (rawId && nodeId) childByRaw.set(String(rawId), nodeId);
+  }
+
+  function resolveChildNode(rawId) {
+    if (!rawId) return null;
+    const key = String(rawId);
+    if (childByRaw.has(key)) return childByRaw.get(key);
+    const { nodeId } = childNodeIdFromRaw(key);
+    childByRaw.set(key, nodeId);
+    return nodeId;
+  }
+
+  return function mapJsonEventMulti(obj) {
+    if (!obj || typeof obj !== "object") return null;
+    const typeRaw = String(obj.type || obj.event || obj.kind || "").toLowerCase();
+    const toolName =
+      obj.tool ||
+      obj.name ||
+      (obj.tool_call && (obj.tool_call.name || obj.tool_call.tool)) ||
+      null;
+    const callId =
+      obj.callId ||
+      obj.call_id ||
+      (obj.tool_call && (obj.tool_call.id || obj.tool_call.callId)) ||
+      null;
+    const resultText =
+      (typeof obj.result === "string" ? obj.result : null) ||
+      obj.message ||
+      obj.text ||
+      obj.content ||
+      "";
+
+    if (typeRaw === "tool_call" || typeRaw === "tool_use") {
+      const name = toolName ? String(toolName) : "tool";
+      if (DELEGATE_TOOLS.has(name)) {
+        pendingSerial += 1;
+        const rawKey = String(callId || pendingSerial).replace(/[^A-Za-z0-9]/g, "");
+        const nodeId = `child-p${(rawKey.slice(-8) || String(pendingSerial))}`;
+        const meta = extractDelegateInput(obj.input);
+        if (callId) callMap.set(String(callId), { tool: name, nodeId, label: meta.label || meta.task });
+        const hint = meta.label || meta.task || "委派子任务";
+        return {
+          agent: nodeId,
+          type: "handoff",
+          tool: name,
+          status: "running",
+          message: truncate(`根 Agent → ${name} · ${hint}`, 300),
+          edge: `e-agent-${nodeId}`,
+          state: "启动中…",
+          activeNodes: ["agent", nodeId],
+          createChild: {
+            id: nodeId,
+            title: meta.label
+              ? `子 Agent · ${truncate(meta.label, 16)}`
+              : `子 Agent ${pendingSerial}`,
+            en: name === "subagent_fork" ? "Fork" : "Spawn",
+          },
+          detail: { callId, tool: name, input: obj.input },
+        };
+      }
+      if (name === "send_message") {
+        const targetRaw =
+          obj.input && (obj.input.agent_id || obj.input.agentId || obj.input.id);
+        const nodeId = resolveChildNode(targetRaw) || "agent";
+        if (callId) callMap.set(String(callId), { tool: name, nodeId, rawId: targetRaw });
+        const msg = (obj.input && (obj.input.message || obj.input.text)) || "";
+        return {
+          agent: nodeId === "agent" ? "agent" : nodeId,
+          type: "handoff",
+          tool: name,
+          status: "running",
+          message: truncate(`send_message → ${targetRaw || "?"} · ${msg}`, 300),
+          edge: nodeId === "agent" ? null : `e-agent-${nodeId}`,
+          state: "发送消息…",
+          activeNodes: nodeId === "agent" ? ["agent"] : ["agent", nodeId],
+          createChild:
+            nodeId !== "agent"
+              ? {
+                  id: nodeId,
+                  title: `子 Agent · ${childNodeIdFromRaw(targetRaw).short}`,
+                }
+              : undefined,
+          detail: { callId, tool: name, target: targetRaw },
+        };
+      }
+      if (callId) callMap.set(String(callId), { tool: name, nodeId: "tools" });
+    }
+
+    if (
+      typeRaw === "tool_result" ||
+      typeRaw === "tool_response" ||
+      typeRaw === "function_result"
+    ) {
+      const rec = callId ? callMap.get(String(callId)) : null;
+      const name = String(toolName || (rec && rec.tool) || "tool");
+      const startedId = parseStartedSubagent(resultText);
+      if (DELEGATE_TOOLS.has(name) || startedId) {
+        let nodeId = rec && rec.nodeId;
+        if (startedId) {
+          if (nodeId) rememberChild(startedId, nodeId);
+          else nodeId = resolveChildNode(startedId);
+          rememberChild(startedId, nodeId);
+        }
+        if (!nodeId) nodeId = "agent";
+        const st = String(obj.status || "ok").toLowerCase();
+        const ok = st !== "error" && st !== "failed";
+        return {
+          agent: nodeId,
+          type: "tool",
+          tool: name,
+          status: ok ? "ok" : "error",
+          message: truncate(resultText || `started ${nodeId}`, 300),
+          edge: `e-agent-${nodeId}`,
+          state: ok ? "运行中…" : "启动失败",
+          activeNodes: ["agent", nodeId],
+          createChild: {
+            id: nodeId,
+            title: startedId
+              ? `子 Agent · ${childNodeIdFromRaw(startedId).short}`
+              : "子 Agent",
+            en: name === "subagent_fork" ? "Fork" : "Spawn",
+          },
+          detail: { callId, childId: startedId, tool: name },
+        };
+      }
+      if (name === "send_message" && rec) {
+        const nodeId = rec.nodeId || "agent";
+        return {
+          agent: nodeId === "tools" ? "agent" : nodeId,
+          type: "handoff",
+          tool: name,
+          status: "ok",
+          message: truncate(resultText || "send_message 已接受", 300),
+          edge:
+            nodeId && nodeId !== "tools" && nodeId !== "agent"
+              ? `e-agent-${nodeId}`
+              : null,
+          state: "消息已送达",
+          activeNodes:
+            nodeId && nodeId !== "tools" && nodeId !== "agent"
+              ? ["agent", nodeId]
+              : ["agent"],
+          detail: { callId, tool: name },
+        };
+      }
+    }
+
+    const scanText =
+      typeRaw === "text" ||
+      typeRaw === "assistant" ||
+      typeRaw === "message" ||
+      typeRaw === "final"
+        ? String(obj.message || obj.text || obj.content || resultText || "")
+        : "";
+    const finishedId = scanText ? parseBackgroundFinished(scanText) : null;
+    if (finishedId) {
+      const nodeId = resolveChildNode(finishedId);
+      return {
+        agent: nodeId,
+        type: "handoff",
+        message: truncate(scanText, 300),
+        edge: `e-${nodeId}-agent`,
+        state: "已回报",
+        activeNodes: [nodeId, "agent"],
+        createChild: {
+          id: nodeId,
+          title: `子 Agent · ${childNodeIdFromRaw(finishedId).short}`,
+        },
+        detail: { childId: finishedId },
+      };
+    }
+
+    return mapJsonEvent(obj);
+  };
+}
+
 function createAndRunTask(opts, emit) {
   const prompt = String(opts.prompt || "").trim();
   if (!prompt) throw new Error("prompt is required");
 
+  const mode = opts.mode === "multi" ? "multi" : "single";
   const runner = resolveRunner();
   const task_id = makeTaskId();
   const now = new Date().toISOString();
@@ -359,6 +588,7 @@ function createAndRunTask(opts, emit) {
     exit_code: null,
     error: null,
     summary: null,
+    mode,
   };
   tasks.set(task_id, rec);
 
@@ -373,6 +603,7 @@ function createAndRunTask(opts, emit) {
     runner: rec.runner,
     runner_kind: rec.runner_kind,
     prompt: truncate(prompt, 200),
+    mode,
   };
 }
 
@@ -385,6 +616,10 @@ function createAndRunTask(opts, emit) {
  * @param {{ task_id: string, step: number }} base
  */
 function runPipeline(rec, runner, prompt, cwd, emit, base) {
+  const mode = rec.mode === "multi" ? "multi" : "single";
+  const mapEvent = mode === "multi" ? createMultiMapper() : mapJsonEvent;
+  const spawnPrompt = mode === "multi" ? wrapMultiPrompt(prompt) : prompt;
+
   rec.status = "running";
   rec.updated_at = new Date().toISOString();
 
@@ -396,27 +631,35 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
     edge: "e-user-agent",
     state: "已提交真实任务",
     activeNodes: ["user", "agent"],
-    detail: { runner: runner.bin, runner_kind: runner.kind, cwd },
+    detail: { runner: runner.bin, runner_kind: runner.kind, cwd, mode },
   });
 
   emitStep(emit, base, {
     agent: "agent",
     type: "status",
     status: "running",
-    message: `启动本机 ${runner.kind}（单 Agent · headless）`,
+    message:
+      mode === "multi"
+        ? `启动本机 ${runner.kind}（多 Agent · subagent 委派）`
+        : `启动本机 ${runner.kind}（单 Agent · headless）`,
     state: "启动中…",
     activeNodes: ["agent"],
     detail: {
       argv0: runner.bin,
       profile: process.env.DSH_PROFILE || "headless",
       json: !!runner.jsonPreferred,
+      mode,
     },
   });
 
-  const cmdArgs = [...runner.argsPrefix, prompt];
+  const cmdArgs = [...runner.argsPrefix, spawnPrompt];
   const child = spawn(runner.bin, cmdArgs, {
     cwd,
-    env: { ...process.env, VISUAL_AGENTS_TASK_ID: rec.task_id },
+    env: {
+      ...process.env,
+      VISUAL_AGENTS_TASK_ID: rec.task_id,
+      ...(mode === "multi" ? { VISUAL_AGENTS_MODE: "multi" } : {}),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -436,7 +679,7 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
     if (t.startsWith("{") && t.endsWith("}")) {
       try {
         const obj = JSON.parse(t);
-        const mapped = mapJsonEvent(obj);
+        const mapped = mapEvent(obj);
         if (mapped) {
           jsonHits += 1;
           const finalHint = mapped._finalHint;
@@ -444,7 +687,10 @@ function runPipeline(rec, runner, prompt, cwd, emit, base) {
           if (finalHint) sawFinal = true;
           emitStep(emit, base, {
             ...mapped,
-            detail: { stream: streamName, json: true },
+            detail:
+              mode === "multi"
+                ? { ...(mapped.detail || {}), stream: streamName, json: true }
+                : { stream: streamName, json: true },
           });
           return;
         }
@@ -620,10 +866,11 @@ function runnerInfo() {
       profile: process.env.DSH_PROFILE || "headless",
       json: !!r.jsonPreferred,
       topology: "user-agent-tools",
+      supported_modes: ["single", "multi"],
       hint:
         r.kind === "fake-dsh"
           ? "Install DeepSeek Harness so `dsh` is on PATH, or set DSH_BIN. Using scripts/fake-dsh.sh for demo."
-          : "Using real dsh from PATH (or DSH_BIN). Events map to single-agent user/agent/tools.",
+          : "Using real dsh from PATH (or DSH_BIN). Events map to single-agent user/agent/tools by default; POST /tasks { mode: \"multi\" } maps subagent tools to child nodes.",
     };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
@@ -640,4 +887,6 @@ module.exports = {
   FAKE_DSH,
   classifyPlainLine,
   mapJsonEvent,
+  createMultiMapper,
+  wrapMultiPrompt,
 };

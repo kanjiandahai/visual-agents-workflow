@@ -5,12 +5,13 @@
 
 - Repo: https://github.com/kanjiandahai/visual-agents-workflow
 - Live demo (GitHub Pages): https://kanjiandahai.github.io/visual-agents-workflow/
+- Multi-agent demo (additive): https://kanjiandahai.github.io/visual-agents-workflow/multi-agent.html
 - License: MIT
 - Stack: static HTML/CSS/JS in `docs/` + optional Node SSE bridge in `server/`
 
 ## What it is
 
-Interactive sandbox that visualizes a **User → Agent → Tools → Agent → User** loop (one Agent, not a multi-agent cast).
+Interactive sandbox that visualizes a **User → Agent → Tools → Agent → User** loop (one Agent by default). A separate page visualizes dsh parent→child delegation (`subagent` / `subagent_fork`).
 
 | Mode | Backend needed? | Use |
 |------|-----------------|-----|
@@ -48,14 +49,17 @@ node server/sse-server.js
 
 | Path | Role |
 |------|------|
-| `docs/index.html` | UI shell (script / live / task form) |
-| `docs/app.js` | State machine, playbook, demo live, SSE, tasks |
+| `docs/index.html` | Default single-agent UI (script / live / task form) |
+| `docs/app.js` | Single-agent state machine, playbook, demo live, SSE, tasks |
+| `docs/multi-agent.html` | Additive multi-agent UI (dsh subagent topology) |
+| `docs/multi-agent.js` | Multi-agent playbook + live mapping |
+| `docs/MULTI_AGENT.md` | Multi-agent demo notes |
 | `docs/styles.css` | Styles |
 | `docs/REAL_TASKS.md` | Real-task wiring plan + phase-1 dsh guide |
-| `docs/sample/` | Sample NDJSON event streams |
+| `docs/sample/` | Sample NDJSON (including `multi-agent-*.jsonl`) |
 | `docs/llms.txt` | Pages-served copy of this file |
-| `server/sse-server.js` | SSE `/events`, `/emit`, `/tasks`, static `docs/` |
-| `server/task-runner.js` | `dsh` / `fake-dsh` → single-agent event mapping |
+| `server/sse-server.js` | SSE `/events`, `/emit`, `/tasks`, `/tasks/multi`, static `docs/` |
+| `server/task-runner.js` | `dsh` / `fake-dsh` → events (default single-agent; `mode=multi` maps child nodes) |
 | `scripts/fake-dsh.sh` | Fallback CLI when `dsh` is missing |
 
 ## HTTP API (local SSE server, default `127.0.0.1:8787`)
@@ -67,7 +71,8 @@ node server/sse-server.js
 | `GET` | `/runner` | `{ runner_kind: "dsh" \| "fake-dsh", topology: "user-agent-tools", ... }` |
 | `GET` | `/events` | SSE stream (event name `agent`) |
 | `POST` | `/emit` | Push one JSON agent event |
-| `POST` | `/tasks` | Body `{ "prompt": "…" }` → `{ task_id, runner_kind }` |
+| `POST` | `/tasks` | Body `{ "prompt": "…", "mode"?: "multi" }` → `{ task_id, runner_kind }` (default single-agent) |
+| `POST` | `/tasks/multi` | Same, forces `mode: "multi"` |
 | `GET` | `/tasks` | List tasks |
 | `GET` | `/tasks/:id` | Task detail |
 

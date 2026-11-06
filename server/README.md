@@ -15,11 +15,12 @@ node server/sse-server.js
 |------|------|
 | `GET /health` | 健康检查 + runner 信息 |
 | `GET /runner` | 当前 dsh / fake-dsh；含 `topology: user-agent-tools` |
-| `POST /tasks` | body: `{ "prompt": "…" }` → `{ task_id, runner_kind }` |
+| `POST /tasks` | body: `{ "prompt": "…", "mode"?: "multi" }` → `{ task_id, runner_kind }`；省略 `mode` 时为单 Agent |
+| `POST /tasks/multi` | 同上，强制 `mode: "multi"`（把 `subagent` / `subagent_fork` 映射为子 Agent 节点） |
 | `GET /tasks` / `GET /tasks/:id` | 任务列表 / 详情 |
 
 环境变量：`PORT`、`HOST`、`DSH_BIN`、`DSH_PROFILE`（默认 `headless`）、`DSH_JSON`（`0` 关闭真实 dsh 的 `--json`）。
 
-`task-runner.js` **不会**再合成规划者 / 审核者；优先解析 `dsh --json` NDJSON，否则按行启发式识别工具调用。
+`task-runner.js` **不会**再合成规划者 / 审核者；优先解析 `dsh --json` NDJSON，否则按行启发式识别工具调用。默认映射为单 Agent（`user` / `agent` / `tools`）；仅当请求带 `mode: "multi"` 时才把委派工具映射到动态子 Agent 节点。
 
 完整步骤见 [`docs/REAL_TASKS.md`](../docs/REAL_TASKS.md)「第一期：本机 dsh」。

@@ -855,3 +855,85 @@ body.mode-live .node.active {
     grid-column: 1 / -1;
   }
 }
+
+
+/* —— Cross-demo link (single ↔ multi) —— */
+.sibling-demo {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.75rem;
+  border-radius: 10px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.sibling-demo:hover {
+  color: var(--text);
+  border-color: #3f5585;
+  background: var(--bg-soft);
+}
+
+.sibling-demo-footer {
+  color: var(--accent);
+  text-decoration: none;
+}
+.sibling-demo-footer:hover {
+  text-decoration: underline;
+}
+
+/* —— Multi-agent page layout (body.multi-agent only) —— */
+body.multi-agent {
+  --child: #c084fc;
+}
+
+body.multi-agent .stage {
+  min-height: 480px;
+  height: min(64vh, 640px);
+}
+
+body.multi-agent .node[data-id="user"] {
+  left: 16%;
+  top: 20%;
+}
+
+body.multi-agent .node[data-id="agent"] {
+  --node-color: var(--agent);
+  left: 50%;
+  top: 20%;
+}
+
+body.multi-agent .node[data-id="tools"] {
+  left: 50%;
+  top: 82%;
+}
+
+body.multi-agent .node[data-role="child"] {
+  --node-color: var(--child);
+  left: var(--nx, 50%);
+  top: var(--ny, 52%);
+}
+
+body.multi-agent .event-list .agent[data-agent^="child"] {
+  color: var(--child);
+}
+
+@media (max-width: 900px) {
+  body.multi-agent .stage {
+    height: 520px;
+  }
+
+  body.multi-agent .node[data-id="user"] {
+    left: 22%;
+    top: 16%;
+  }
+
+  body.multi-agent .node[data-id="agent"] {
+    left: 74%;
+    top: 16%;
+  }
+
+  body.multi-agent .node[data-id="tools"] {
+    left: 50%;
+    top: 84%;
+  }
+}

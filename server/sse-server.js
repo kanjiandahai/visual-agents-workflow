@@ -4,7 +4,8 @@
  *   GET  /events          — Server-Sent Events stream
  *   POST /emit            — push one JSON event
  *   GET  /health          — { ok, clients, events, runner }
- *   POST /tasks           — { prompt, cwd? } → create+run via dsh
+ *   POST /tasks           — { prompt, cwd?, mode? } → create+run via dsh
+ *   POST /tasks/multi     — same as /tasks with mode: "multi" (subagent mapping)
  *   GET  /tasks           — list recent tasks
  *   GET  /tasks/:id       — task status
  *   GET  /runner          — which dsh binary will be used
@@ -90,6 +91,9 @@ function normalizeEvent(raw) {
   if (ev.tool != null) out.tool = String(ev.tool);
   if (ev.status != null) out.status = String(ev.status);
   if (ev.detail != null && typeof ev.detail === "object") out.detail = ev.detail;
+  if (ev.createChild != null && typeof ev.createChild === "object") {
+    out.createChild = ev.createChild;
+  }
   return out;
 }
 
@@ -202,7 +206,35 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const raw = body ? JSON.parse(body) : {};
       const created = createAndRunTask(
-        { prompt: raw.prompt || raw.task || raw.message, cwd: raw.cwd },
+        {
+          prompt: raw.prompt || raw.task || raw.message,
+          cwd: raw.cwd,
+          mode: raw.mode === "multi" ? "multi" : undefined,
+        },
+        (ev) => {
+          try {
+            broadcast(normalizeEvent(ev));
+          } catch (err) {
+            console.error("[tasks] emit failed", err);
+          }
+        }
+      );
+      return sendJson(res, 202, { ok: true, ...created });
+    } catch (err) {
+      return sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/tasks/multi") {
+    try {
+      const body = await readBody(req);
+      const raw = body ? JSON.parse(body) : {};
+      const created = createAndRunTask(
+        {
+          prompt: raw.prompt || raw.task || raw.message,
+          cwd: raw.cwd,
+          mode: "multi",
+        },
         (ev) => {
           try {
             broadcast(normalizeEvent(ev));
@@ -230,6 +262,7 @@ const server = http.createServer(async (req, res) => {
         prompt: t.prompt.length > 160 ? t.prompt.slice(0, 157) + "…" : t.prompt,
         summary: t.summary,
         error: t.error,
+        mode: t.mode || "single",
       })),
     });
   }
@@ -255,6 +288,7 @@ server.listen(PORT, HOST, () => {
   console.log(`[sse] stream   http://${HOST}:${PORT}/events`);
   console.log(`[sse] emit     POST http://${HOST}:${PORT}/emit`);
   console.log(`[sse] tasks    POST http://${HOST}:${PORT}/tasks`);
+  console.log(`[sse] multi    POST http://${HOST}:${PORT}/tasks/multi`);
   console.log(
     `[sse] runner   ${info.runner_kind} → ${info.runner}${info.dsh_on_path ? "" : " (fallback)"}`
   );
